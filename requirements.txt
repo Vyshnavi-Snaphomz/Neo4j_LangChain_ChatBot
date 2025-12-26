@@ -1,0 +1,10 @@
+tenacity!=8.4.0
+langchain
+openai==1.56.0
+langchain-openai
+neo4j==5.27.0
+streamlit==1.51.0
+langchainhub
+langchain-neo4j
+toml
+langchain-core

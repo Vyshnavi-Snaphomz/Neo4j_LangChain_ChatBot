@@ -1,0 +1,9 @@
+I have updated the `requirements.txt` file to fix the `ModuleNotFoundError`.
+
+Please run the following command in your terminal to install the correct package versions:
+
+```
+pip install -r requirements.txt
+```
+
+This will resolve the error you are seeing. I cannot run this command for you due to security restrictions.
