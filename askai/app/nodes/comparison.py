@@ -36,12 +36,16 @@ def comparison_handler(state: AgentState):
                 count = num_map[num_word]
                 numbers = list(range(1, min(count + 1, len(previous_results) + 1)))
     
-    # Pattern 3: "#1 and #3", "1 and 3"
+    # Pattern 3: Robust extraction (handles "5th and 6th", "1 and 3", "#2 and #5")
     if not numbers:
-        pattern3 = r'#?(\d+)\s+and\s+#?(\d+)'
-        match = re.search(pattern3, last_message)
-        if match:
-            numbers = [int(match.group(1)), int(match.group(2))]
+        # Find all numbers in the string, handling optional ordinals (st, nd, rd, th)
+        # Regex explanation:
+        # \d+ : one or more digits
+        # (?:st|nd|rd|th)? : optional ordinal suffix
+        matches = re.findall(r'(\d+)(?:st|nd|rd|th)?', last_message)
+        if len(matches) >= 2:
+            # Take the first two numbers found
+            numbers = [int(matches[0][0]), int(matches[1][0])]
     
     # Validate
     if not numbers or len(numbers) < 2:

@@ -33,6 +33,16 @@ class Neo4jClient:
                 print(f"Neo4j Query Error: {e}")
                 raise e
 
+    def write_query(self, cypher: str, params: Dict[str, Any] = {}) -> List[Dict[str, Any]]:
+        with self.driver.session() as session:
+            try:
+                return session.execute_write(
+                    lambda tx: [record.data() for record in tx.run(cypher, params)]
+                )
+            except Exception as e:
+                print(f"Neo4j Write Error: {e}")
+                raise e
+
     def structured_search(self, cypher: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
         # Enforce safety: Read transactions only could be better but run() is fine for now
         return self.query(cypher, params)

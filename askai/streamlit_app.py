@@ -1,6 +1,24 @@
 import streamlit as st
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 from app.agent_wrapper import AgentWrapper
 from app.property_utils import compare_properties
+from app.telemetry import setup_telemetry
+
+from app.agent_wrapper import AgentWrapper
+from app.property_utils import compare_properties
+from app.telemetry import setup_telemetry
+from app.history import SessionManager
+
+# Initialize Telemetry (Cached to run once)
+@st.cache_resource
+def init_telemetry():
+    setup_telemetry()
+
+init_telemetry()
 
 # Page configuration
 st.set_page_config(
@@ -26,12 +44,56 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# Initialize Session Manager
+session_manager = SessionManager()
 
+# --- SIDEBAR: Session History ---
+with st.sidebar:
+    st.header("🗄️ Chat History")
+    
+    if st.button("➕ New Chat", use_container_width=True):
+        st.session_state.current_session_id = session_manager.create_session()
+        st.session_state.messages = []
+        st.session_state.agent = AgentWrapper(session_id=st.session_state.current_session_id)
+        st.rerun()
+
+    st.markdown("---")
+    
+    # List previous sessions
+    sessions = session_manager.list_sessions()
+    
+    # If no session active, default to the most recent or create new
+    if "current_session_id" not in st.session_state:
+        if sessions:
+            st.session_state.current_session_id = sessions[0]["id"]
+        else:
+            st.session_state.current_session_id = session_manager.create_session()
+            
+    # Session Selector
+    for sess in sessions:
+        title = sess.get("title", "New Chat") or "New Chat"
+        created = sess.get("createdAt")
+        label = f"{title} ({str(created).split('T')[0]})"
+        
+        if st.button(label, key=sess["id"], use_container_width=True):
+            st.session_state.current_session_id = sess["id"]
+            # Reload agent with selected session
+            st.session_state.agent = AgentWrapper(session_id=sess["id"])
+            # Load messages for UI
+            history = st.session_state.agent.get_history()
+            st.session_state.messages = history
+            st.rerun()
+
+# --- MAIN CHAT ---
+
+# Initialize Agent if not present (on first load)
 if "agent" not in st.session_state:
-    st.session_state.agent = AgentWrapper()
+    st.session_state.agent = AgentWrapper(session_id=st.session_state.current_session_id)
+    # Sync UI messages with agent history
+    st.session_state.messages = st.session_state.agent.get_history()
+
+if "comparison_list" not in st.session_state:
+    st.session_state.comparison_list = []
 
 if "comparison_list" not in st.session_state:
     st.session_state.comparison_list = []
