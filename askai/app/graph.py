@@ -15,6 +15,7 @@ from app.nodes.reference import reference_handler
 from app.nodes.comparison import comparison_handler
 from app.nodes.census_data import census_data_enrichment
 from app.nodes.financial_analysis import financial_analysis_handler
+from app.nodes.conceptual import conceptual_handler
 
 workflow = StateGraph(AgentState)
 
@@ -23,6 +24,7 @@ workflow.add_node("Intent_Classifier", intent_classifier)
 workflow.add_node("Reference_Handler", reference_handler)
 workflow.add_node("Comparison_Handler", comparison_handler)
 workflow.add_node("Financial_Analysis_Handler", financial_analysis_handler)
+workflow.add_node("Conceptual_Handler", conceptual_handler)
 workflow.add_node("Entity_Extractor", entity_extractor)
 workflow.add_node("Query_Planner", query_planner)
 workflow.add_node("Cypher_Generator", cypher_generator)
@@ -45,6 +47,8 @@ def route_after_intent(state):
         return "Comparison_Handler"
     elif intent == "financial_analysis":
         return "Financial_Analysis_Handler"
+    elif intent == "conceptual":
+        return "Conceptual_Handler"
     else:
         return "Entity_Extractor"
 
@@ -55,6 +59,7 @@ workflow.add_conditional_edges(
         "Reference_Handler": "Reference_Handler",
         "Comparison_Handler": "Comparison_Handler",
         "Financial_Analysis_Handler": "Financial_Analysis_Handler",
+        "Conceptual_Handler": "Conceptual_Handler",
         "Entity_Extractor": "Entity_Extractor"
     }
 )
@@ -63,6 +68,7 @@ workflow.add_conditional_edges(
 workflow.add_edge("Reference_Handler", "Final_Response")
 workflow.add_edge("Comparison_Handler", "Final_Response")
 workflow.add_edge("Financial_Analysis_Handler", "Final_Response")
+workflow.add_edge("Conceptual_Handler", "Final_Response")
 
 # Normal search flow with Census Data enrichment
 workflow.add_edge("Entity_Extractor", "Query_Planner")

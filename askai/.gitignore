@@ -1,0 +1,36 @@
+# User data and telemetry logs (contains PII)
+data/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.log
+*.tmp
+test_router_only.py
+URGENT_FIX.md
+
+# Neo4j
+.neo4j/
+
+# Streamlit
+.streamlit/secrets.toml

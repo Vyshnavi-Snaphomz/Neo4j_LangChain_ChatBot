@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 class IntentClassification(BaseModel):
-    intent: str = Field(description="Intent: 'search', 'greet', 'question', 'reference', 'comparison', 'financial_analysis', or 'unknown'")
+    intent: str = Field(description="Intent: 'search', 'greet', 'question', 'reference', 'comparison', 'financial_analysis', 'conceptual', or 'unknown'")
 
 def intent_classifier(state: AgentState):
     llm = get_llm()
@@ -30,19 +30,27 @@ def intent_classifier(state: AgentState):
 - 'search': User wants to find properties (e.g., "Find homes in Dallas", "Show me 4 bed houses")
 - 'greet': User is greeting or saying goodbye (e.g., "Hello", "Hi", "Thanks", "Bye")
 - 'question': User is asking a general real estate question (e.g., "What is HOA?", "How does PMI work?")
+- 'conceptual': User is asking for real estate advice, explanations, or reasoning that doesn't require property data (e.g., "Is a price cut always a bad sign?", "Should I buy now or wait?", "Is HOA worth it?", "What makes a good investment property?", **"What is SnapGrad?", "Tell me about Pre-Approval", "Explain Snaphomz ecosystem", "What are satellite sites?"**)
 - 'reference': User is referencing a specific property from previous results (e.g., "Tell me more about property 2", "Show details of the first one")
   * ONLY classify as 'reference' if there are previous results available
   * Current status: {"Previous results available" if has_previous_results else "No previous results"}
-- 'comparison': User wants to compare multiple properties (e.g., "compare property 1 and 3", "compare the first two", "show comparison of #2 and #5")
+- 'comparison': User wants to compare multiple properties BY PROPERTY NUMBER (e.g., "compare property 1 and 3", "compare the first two", "show comparison of #2 and #5")
   * ONLY classify as 'comparison' if there are previous results available
+  * ONLY classify as 'comparison' if user references specific property NUMBERS (#1, #2, "first one", etc.)
+  * If user compares PRICE TIERS (e.g., "500k vs 700k") → use 'financial_analysis' instead
   * Current status: {"Previous results available" if has_previous_results else "No previous results"}
-- 'financial_analysis': User wants mortgage calculations, affordability analysis, or financial comparison (e.g., "Compare buying a 950k vs 1.15M home", "Calculate monthly payment with 180k down", "Should I buy this house?", "What's my mortgage payment?", "Compare these financially")
+- 'financial_analysis': User wants mortgage calculations, affordability analysis, or PRICE TIER comparison (e.g., "Compare buying a 950k vs 1.15M home", "Compare 500k vs 700k homes in Austin", "Calculate monthly payment with 180k down", "Should I buy this house?", "What's my mortgage payment?")
   * Can work with or without previous results
-  * Look for: down payment mentions, mortgage/payment calculations, financial comparisons, affordability questions
+  * Look for: down payment mentions, mortgage/payment calculations, PRICE TIER comparisons, affordability questions
 - 'unknown': Anything else that doesn't fit the above categories
 
 IMPORTANT:
+- If user asks for advice, reasoning, or explanations about real estate concepts → 'conceptual'
+- If user asks "is X worth it?" or "is the difference worth it?" → 'conceptual'
+- If user asks "what if rates change?" or "what if rates go up/down?" → 'financial_analysis'
+- **If user asks about closing costs, fees, disclosures, inspections, pre-approval, or satellite sites → 'conceptual'**
 - If user mentions specific property numbers (#1, #2, "first one", etc.) AND previous results exist → 'reference' or 'comparison'
+- If user compares PRICE TIERS (500k vs 700k, 950k vs 1.15M) → 'financial_analysis'
 - If user asks about mortgage, payments, affordability, financial comparison → 'financial_analysis'
 - If user asks to find/search/show properties → 'search'
 - Default to 'search' for property-related queries without clear intent
@@ -51,9 +59,21 @@ Examples:
 - "Find 4 bed homes in DFW" → 'search'
 - "Tell me about property 2" → 'reference' (if previous results exist)
 - "Compare property 1 and 3" → 'comparison' (if previous results exist)
+- "Compare 500k vs 700k homes in Austin" → 'financial_analysis'
 - "Compare buying a 950k vs 1.15M home" → 'financial_analysis'
 - "I have 180k down, should I buy this?" → 'financial_analysis'
 - "Calculate monthly payment for 950k home" → 'financial_analysis'
+- "What if rates go up another 2%?" → 'financial_analysis'
+- "Is a price cut always a bad sign?" → 'conceptual'
+- "Should I buy now or wait?" → 'conceptual'
+- "What makes a good investment property?" → 'conceptual'
+- "Is the price difference worth it?" → 'conceptual'
+- "How do I understand my closing costs?" → 'conceptual'
+- "Are these fees normal?" → 'conceptual'
+- "Should I get pre-approved?" → 'conceptual'
+- "What is SnapGrad?" → 'conceptual'
+- "Tell me about Pre-Approval" → 'conceptual'
+- "Explain Snaphomz satellite sites" → 'conceptual'
 - "What is PMI?" → 'question'
 - "Hello" → 'greet'
 """),

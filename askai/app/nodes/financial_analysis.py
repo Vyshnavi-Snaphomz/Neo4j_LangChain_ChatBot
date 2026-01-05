@@ -15,6 +15,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import math
+from app.nodes.search import neo4j_search
 
 class FinancialParameters(BaseModel):
     """Financial parameters extracted from user query"""
@@ -42,6 +43,74 @@ class MortgageCalculation(BaseModel):
     total_monthly: float
     total_annual: float
     
+def extract_context_from_history(conversation_history: List[Dict], current_message: str) -> Dict[str, Any]:
+    """
+    Extract financial context from conversation history for follow-up questions.
+    
+    Returns dict with: target_prices, down_payment, credit_tier
+    """
+    import re
+    
+    context = {
+        "target_prices": None,
+        "down_payment": None,
+        "credit_tier": None
+    }
+    
+    # Look back through last 5 messages for context
+    for msg in conversation_history[-5:]:
+        if msg["role"] == "user":
+            content = msg["content"].lower()
+            
+            # Extract prices (e.g., "900k vs 1.2M", "500k and 700k")
+            price_patterns = [
+                r'(\d+(?:\.\d+)?)\s*(k|m)\s*(?:vs|and|or)\s*(\d+(?:\.\d+)?)\s*(k|m)',
+            ]
+            
+            for pattern in price_patterns:
+                match = re.search(pattern, content, re.IGNORECASE)
+                if match:
+                    p1_str, unit1, p2_str, unit2 = match.groups()
+                    p1 = float(p1_str)
+                    p2 = float(p2_str)
+                    
+                    # Convert to actual values based on individual units
+                    if unit1.lower() == 'k':
+                        p1 *= 1000
+                    elif unit1.lower() == 'm':
+                        p1 *= 1000000
+                    
+                    if unit2.lower() == 'k':
+                        p2 *= 1000
+                    elif unit2.lower() == 'm':
+                        p2 *= 1000000
+                    
+                    context["target_prices"] = [p1, p2]
+                    break
+            
+            # Extract down payment
+            down_patterns = [
+                r'(\d+)\s*k\s+down',
+                r'\$(\d+(?:,\d{3})*)\s+down',
+            ]
+            for pattern in down_patterns:
+                match = re.search(pattern, content)
+                if match:
+                    down_str = match.group(1).replace(',', '')
+                    down_val = float(down_str)
+                    if 'k' in content:
+                        down_val *= 1000
+                    context["down_payment"] = down_val
+                    break
+            
+            # Extract credit tier
+            if 'excellent credit' in content:
+                context["credit_tier"] = "excellent"
+            elif 'good credit' in content:
+                context["credit_tier"] = "good"
+    
+    return context
+
 def extract_financial_parameters(state: AgentState) -> FinancialParameters:
     """
     Extract financial parameters from user query using LLM
@@ -275,6 +344,185 @@ def select_properties_by_price(
     # Return top 3
     return filtered[:3]
 
+def fetch_properties_for_price_band(
+    state: AgentState,
+    target_price: float,
+    location_entities: Dict[str, Any],
+    tolerance: float = 0.10
+) -> List[Dict]:
+    """
+    Fetch real properties from Neo4j for a specific price band
+    
+    Args:
+        state: Current agent state
+        target_price: Target price point
+        location_entities: Location filters (city, state, etc.)
+        tolerance: Price tolerance (default 10%)
+    
+    Returns:
+        List of up to 3 properties near target price
+    """
+    min_price = target_price * (1 - tolerance)
+    max_price = target_price * (1 + tolerance)
+    
+    # Build search entities for this price band
+    search_entities = {
+        **location_entities,
+        "min_price": min_price,
+        "max_price": max_price
+    }
+    
+    # Create temporary state for search
+    search_state = {
+        **state,
+        "extracted_entities": search_entities
+    }
+    
+    # Execute Neo4j search
+    result = neo4j_search(search_state)
+    properties = result.get("search_results", [])
+    
+    # FILTER: Remove extreme outliers and ensure realistic comparables
+    filtered = []
+    seen_prices = set()
+    
+    for prop in properties:
+        # Skip if missing critical data
+        if not prop.get("price"):
+            continue
+        
+        # Skip extreme bed/bath outliers (likely commercial or data errors)
+        beds = prop.get("beds", 0)
+        baths = prop.get("baths", 0)
+        if beds and beds > 7:
+            continue
+        if baths and baths > 7:
+            continue
+        
+        # Skip near-duplicate prices (within $1000)
+        price = prop.get("price")
+        if any(abs(price - seen) < 1000 for seen in seen_prices):
+            continue
+        
+        seen_prices.add(price)
+        filtered.append(prop)
+    
+    # Prefer single-family homes if available
+    single_family = [p for p in filtered if p.get("homeType") in ["SINGLE_FAMILY", "single_family", "Single Family"]]
+    if len(single_family) >= 3:
+        filtered = single_family
+    
+    # Return top 3
+    return filtered[:3]
+
+def detect_mixed_intent(last_message: str, params: FinancialParameters) -> Dict[str, Any]:
+    """
+    Detect if user wants both financial analysis AND property listings
+    
+    Returns location entities if mixed intent detected, None otherwise
+    """
+    from app.llm import get_llm
+    from langchain_core.prompts import ChatPromptTemplate
+    from pydantic import BaseModel, Field
+    from typing import Optional, List
+    
+    class MixedIntentDetection(BaseModel):
+        has_location: bool = Field(description="True if user mentions a location (city, state, metro area)")
+        wants_listings: bool = Field(description="True if user asks to 'show options', 'compare homes', 'find properties', etc.")
+        city: Optional[str] = Field(None, description="City name if mentioned")
+        cities: Optional[List[str]] = Field(None, description="List of cities for metro areas (e.g., DFW)")
+        state: Optional[str] = Field(None, description="State name if mentioned")
+    
+    llm = get_llm()
+    structured_llm = llm.with_structured_output(MixedIntentDetection)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """Analyze if the user wants BOTH financial analysis AND real property listings.
+
+LOCATION DETECTION:
+- Look for city names: "Dallas", "Austin", "San Francisco", etc.
+- Look for state names: "Texas", "California", "TX", "CA", etc.
+- Look for metro areas: "DFW" (Dallas-Fort Worth), "Bay Area", etc.
+
+METRO AREA MAPPINGS:
+- "DFW" or "Dallas-Fort Worth" → cities: ["Dallas", "Fort Worth", "Arlington", "Plano", "Irving"]
+- "Bay Area" → cities: ["San Francisco", "Oakland", "San Jose"]
+
+LISTING REQUEST DETECTION:
+- "show options", "show me homes", "find properties"
+- "compare homes", "compare properties"
+- "show 3 options", "give me examples"
+- Any request to see actual listings
+
+Set has_location=True if location mentioned.
+Set wants_listings=True if user asks to see properties.
+
+Examples:
+- "I have 180k down. Should I buy 950k or 1.15M home in DFW? Show 3 options each" 
+  → has_location=True, wants_listings=True, cities=["Dallas", "Fort Worth", "Arlington", "Plano", "Irving"], state="Texas"
+  
+- "Compare 950k vs 1.15M home with 180k down"
+  → has_location=False, wants_listings=False
+  
+- "Show me homes in Austin under 500k"
+  → has_location=True, wants_listings=True, city="Austin", state="Texas"
+"""),
+        ("user", "{input}")
+    ])
+    
+    chain = prompt | structured_llm
+    result = chain.invoke({"input": last_message})
+    
+    if result.has_location and result.wants_listings:
+        entities = {}
+        if result.city:
+            entities["city"] = result.city
+        if result.cities:
+            entities["cities"] = result.cities
+        if result.state:
+            entities["state"] = result.state
+        return entities
+    
+    return None
+
+def format_property_listing(prop: Dict, index: int) -> str:
+    """Format a single property for display"""
+    output = f"\n**Option {index}:**\n"
+    
+    if prop.get("price"):
+        output += f"- **Price:** ${prop['price']:,.0f}\n"
+    
+    location_parts = [prop.get("streetAddress"), prop.get("city"), prop.get("state")]
+    location_str = ", ".join([str(p) for p in location_parts if p])
+    if location_str:
+        output += f"- **Location:** {location_str}\n"
+    
+    # Show all available specs (beds, baths, sqft)
+    specs = []
+    beds = prop.get("beds")
+    baths = prop.get("baths")
+    living_area = prop.get("livingArea")
+    
+    if beds is not None:
+        specs.append(f"{int(beds)} bed")
+    if baths is not None:
+        specs.append(f"{baths} bath")
+    if living_area:
+        specs.append(f"{living_area:,.0f} sqft")
+    
+    if specs:
+        output += f"- **Specs:** {' | '.join(specs)}\n"
+    
+    if prop.get("yearBuilt"):
+        output += f"- **Built:** {prop['yearBuilt']}\n"
+    
+    if prop.get("url"):
+        output += f"- **Listing:** {prop['url']}\n"
+    elif prop.get("hdpUrl"):
+        output += f"- **Listing:** https://www.zillow.com{prop['hdpUrl']}\n"
+    
+    return output
+
 def generate_comparison_table(
     scenarios: List[MortgageCalculation],
     scenario_names: List[str]
@@ -410,13 +658,55 @@ def financial_analysis_handler(state: AgentState) -> Dict[str, Any]:
     Main financial analysis handler
     
     Processes financial analysis queries and generates comprehensive
-    mortgage comparisons with recommendations
+    mortgage comparisons with recommendations.
+    
+    Supports MIXED INTENT: Financial reasoning + real property listings
     """
     print("[DEBUG] Financial analysis handler invoked")
+    
+    last_message = state["messages"][-1][1]
+    conversation_history = state.get("conversation_history", [])
     
     # Extract financial parameters
     params = extract_financial_parameters(state)
     print(f"[DEBUG] Extracted parameters: down_payment={params.down_payment}, target_prices={params.target_prices}")
+    
+    # If missing critical params, try to extract from conversation history
+    if not params.target_prices or not params.down_payment:
+        context = extract_context_from_history(conversation_history, last_message)
+        print(f"[DEBUG] Extracted context from history: {context}")
+        
+        if not params.target_prices and context["target_prices"]:
+            params.target_prices = context["target_prices"]
+            print(f"[DEBUG] Using target_prices from context: {params.target_prices}")
+        
+        if not params.down_payment and context["down_payment"]:
+            params.down_payment = context["down_payment"]
+            print(f"[DEBUG] Using down_payment from context: {params.down_payment}")
+        
+        if not params.credit_tier and context["credit_tier"]:
+            params.credit_tier = context["credit_tier"]
+    
+    # DEFAULT HANDLING: If no down payment specified, use 20% of lowest price tier
+    if params.down_payment is None:
+        if params.target_prices:
+            default_down_payment = params.target_prices[0] * 0.20  # 20% down
+        else:
+            default_down_payment = 100000  # Fallback: $100k
+        params.down_payment = default_down_payment
+        print(f"[DEBUG] No down payment specified, using default: ${default_down_payment:,.0f}")
+    
+    # DEFAULT HANDLING: If no target prices, cannot proceed
+    if not params.target_prices:
+        return {
+            "final_response": "I need price points to compare. Please specify target prices (e.g., 'Compare 500k vs 700k homes in [location]')."
+        }
+    
+    # Detect mixed intent (financial + property search)
+    location_entities = detect_mixed_intent(last_message, params)
+    is_mixed_intent = location_entities is not None
+    
+    print(f"[DEBUG] Mixed intent: {is_mixed_intent}, location: {location_entities}")
     
     # Get current mortgage rate
     if params.interest_rate is None:
@@ -428,32 +718,27 @@ def financial_analysis_handler(state: AgentState) -> Dict[str, Any]:
     
     print(f"[DEBUG] Rates: current={current_rate:.2%}, worst-case={worst_case_rate:.2%}")
     
-    # Get previous search results
-    previous_results = state.get("previous_results", [])
-    
     # Build scenarios
-    scenarios_current = []
     scenarios_worst = []
     scenario_names = []
+    properties_by_tier = {}  # Store properties for each price tier
     
     if params.target_prices:
         # User specified target prices
         for i, target_price in enumerate(params.target_prices, 1):
-            # Try to find properties near target price
-            if previous_results:
-                matching_props = select_properties_by_price(previous_results, target_price)
-                if matching_props:
-                    # Use average price of matching properties
-                    avg_price = sum(p.get("price", 0) for p in matching_props) / len(matching_props)
-                    target_price = avg_price
+            # If mixed intent, fetch real properties for this price tier
+            if is_mixed_intent:
+                print(f"[DEBUG] Fetching properties for ${target_price:,.0f} tier")
+                properties = fetch_properties_for_price_band(
+                    state,
+                    target_price,
+                    location_entities,
+                    tolerance=0.10
+                )
+                properties_by_tier[i] = properties
+                print(f"[DEBUG] Found {len(properties)} properties for tier {i}")
             
-            # Calculate scenarios
-            scenario_current = calculate_mortgage_scenario(
-                target_price,
-                params.down_payment,
-                current_rate,
-                params
-            )
+            # Calculate worst-case scenario
             scenario_worst = calculate_mortgage_scenario(
                 target_price,
                 params.down_payment,
@@ -461,25 +746,81 @@ def financial_analysis_handler(state: AgentState) -> Dict[str, Any]:
                 params
             )
             
-            scenarios_current.append(scenario_current)
             scenarios_worst.append(scenario_worst)
             scenario_names.append(f"${target_price/1000:.0f}k Home")
     
     # Generate response
     response = "\n# 🏠 Financial Analysis\n\n"
     
-    # Current rate scenarios
-    response += f"## Current Rate Scenario ({current_rate:.2%})\n"
-    response += generate_comparison_table(scenarios_current, scenario_names)
-    
-    # Worst-case scenarios
-    response += f"\n## Worst-Case Scenario ({worst_case_rate:.2%})\n"
+    # Worst-case scenarios (primary focus)
+    response += f"## Worst-Case Scenario ({worst_case_rate:.2%})\n"
     response += generate_comparison_table(scenarios_worst, scenario_names)
     
-    # Recommendation
-    response += generate_recommendation(scenarios_current, params)
+    # If mixed intent, show property listings
+    if is_mixed_intent and properties_by_tier:
+        response += "\n## 🏡 Property Options\n\n"
+        
+        global_index = 1  # Track global property number across all tiers
+        
+        for tier_idx, properties in properties_by_tier.items():
+            tier_price = params.target_prices[tier_idx - 1]
+            response += f"\n### ${tier_price/1000:.0f}k Tier Options\n"
+            
+            if properties:
+                for local_idx, prop in enumerate(properties, 1):
+                    # Show both tier-local and global numbering
+                    response += f"\n**Option {local_idx} (Property #{global_index} overall):**\n"
+                    
+                    # Format property details
+                    if prop.get("price"):
+                        response += f"- **Price:** ${prop['price']:,.0f}\n"
+                    
+                    location_parts = [prop.get("streetAddress"), prop.get("city"), prop.get("state")]
+                    location_str = ", ".join([str(p) for p in location_parts if p])
+                    if location_str:
+                        response += f"- **Location:** {location_str}\n"
+                    
+                    specs = []
+                    if prop.get("beds") is not None:
+                        specs.append(f"{int(prop['beds'])} bed")
+                    if prop.get("baths") is not None:
+                        specs.append(f"{prop['baths']} bath")
+                    if prop.get("livingArea"):
+                        specs.append(f"{prop['livingArea']:,.0f} sqft")
+                    
+                    if specs:
+                        response += f"- **Specs:** {' | '.join(specs)}\n"
+                    
+                    if prop.get("yearBuilt"):
+                        response += f"- **Built:** {prop['yearBuilt']}\n"
+                    
+                    if prop.get("url"):
+                        response += f"- **Listing:** {prop['url']}\n"
+                    elif prop.get("hdpUrl"):
+                        response += f"- **Listing:** https://www.zillow.com{prop['hdpUrl']}\n"
+                    
+                    global_index += 1
+            else:
+                response += f"\n*No properties found in the ${tier_price*0.9:,.0f} - ${tier_price*1.1:,.0f} range.*\n"
+        
+        # Add lifestyle tradeoff analysis
+        if len(params.target_prices) >= 2:
+            diff = scenarios_worst[1].total_monthly - scenarios_worst[0].total_monthly
+            response += "\n## 💡 Lifestyle Tradeoffs\n\n"
+            response += f"**Monthly Payment Difference:** ${diff:,.0f}\n\n"
+            response += "**What the extra payment gets you:**\n"
+            response += f"- Higher price tier (${params.target_prices[1]/1000:.0f}k vs ${params.target_prices[0]/1000:.0f}k)\n"
+            response += "- Potentially larger home, better location, or newer construction\n"
+            response += "- Review the property options above to assess value\n\n"
+            response += "**Consider:**\n"
+            response += "- Is the extra monthly payment sustainable?\n"
+            response += "- Do the higher-tier properties justify the cost?\n"
+            response += "- Will you have 6 months emergency fund after purchase?\n"
     
-    # Chain of thought
+    # Recommendation
+    response += generate_recommendation(scenarios_worst, params)
+    
+    # Methodology
     response += "\n---\n\n"
     response += "### 🧠 Analysis Methodology\n\n"
     response += "**Calculations Include**:\n"
@@ -490,6 +831,20 @@ def financial_analysis_handler(state: AgentState) -> Dict[str, Any]:
     response += "**Assumptions**:\n"
     response += f"- Loan term: {params.loan_term_years} years\n"
     response += f"- Down payment: ${params.down_payment:,.0f}\n"
-    response += f"- Credit tier: {params.credit_tier}\n"
+    response += f"- Credit tier: {params.credit_tier or 'good (assumed)'}\n"
     
-    return {"final_response": response}
+    if is_mixed_intent:
+        response += f"- Property search: {location_entities}\n"
+        response += "- Price tolerance: ±10% per tier\n"
+    
+    # Update previous_results if we fetched properties
+    state_updates = {"final_response": response}
+    if is_mixed_intent and properties_by_tier:
+        # Flatten all properties from all tiers for reference
+        all_properties = []
+        for tier_properties in properties_by_tier.values():
+            all_properties.extend(tier_properties)
+        state_updates["previous_results"] = all_properties
+        print(f"[DEBUG] Saved {len(all_properties)} properties to previous_results")
+    
+    return state_updates
