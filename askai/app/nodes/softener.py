@@ -1,20 +1,27 @@
 from app.state import AgentState
 from app.llm import get_llm
 from langchain_core.prompts import ChatPromptTemplate
+from app.nodes.census_data import format_census_insights_for_response
 
 def response_softener(state: AgentState):
     results = state.get("search_results", [])
     query = state["messages"][-1][1]
     intent = state.get("intent", "search")
+    market_insights = state.get("market_insights")
     
     print(f"[DEBUG] Softener received {len(results)} results")
     print(f"[DEBUG] Intent: {intent}")
 
     if not results and intent == "search":
         print(f"[DEBUG] No results found, returning 'Data not available'")
-        return {"final_response": "Data not available in database."}
+        return {"final_response": "I couldn't find any properties matching your criteria in the database. Try adjusting your search parameters (price range, location, bedrooms, etc.)."}
+
+    if not results:
+        # Non-search intent with no results
+        return {}
 
     print(f"[DEBUG] Formatting {len(results)} results for response")
+
     
     # Format results with rich property details
     formatted_results = []
@@ -97,6 +104,9 @@ def response_softener(state: AgentState):
     
     results_text = "\n\n".join(formatted_results)
     
+    # Add Census market insights if available
+    census_insights_text = format_census_insights_for_response(market_insights)
+    
     # Use LLM to create natural response
     llm = get_llm()
     prompt = ChatPromptTemplate.from_messages([
@@ -107,6 +117,11 @@ def response_softener(state: AgentState):
     chain = prompt | llm
     response = chain.invoke({"query": query, "results": results_text})
     
-    print(f"[DEBUG] Softener generated response: '{response.content[:100]}'...")
+    # Append Census insights to the response
+    final_response = response.content
+    if census_insights_text:
+        final_response += census_insights_text
     
-    return {"final_response": response.content}
+    print(f"[DEBUG] Softener generated response: '{final_response[:100]}'...")
+    
+    return {"final_response": final_response}

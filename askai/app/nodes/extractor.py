@@ -3,9 +3,16 @@ from app.llm import get_llm
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 from typing import Optional, List
+from app.abbreviations import (
+    normalize_metro_area,
+    normalize_real_estate_terms,
+    normalize_poi_category,
+    extract_distance_preference
+)
 
 class SearchEntities(BaseModel):
     city: Optional[str] = Field(None, description="City name")
+    cities: Optional[List[str]] = Field(None, description="List of cities for metro area searches")
     state: Optional[str] = Field(None, description="State abbreviation or full name")
     min_price: Optional[float] = Field(None, description="Minimum budget/price")
     max_price: Optional[float] = Field(None, description="Maximum budget/price")
@@ -13,11 +20,25 @@ class SearchEntities(BaseModel):
     baths: Optional[float] = Field(None, description="Minimum number of bathrooms")
     min_lot_size: Optional[float] = Field(None, description="Minimum lot size in acres/sqft")
     keywords: Optional[List[str]] = Field(None, description="Descriptive keywords like aesthetic, countryside, modern, luxury, etc.")
+    poi_type: Optional[str] = Field(None, description="Point of interest type (schools, parks, shopping, etc.)")
+    max_distance: Optional[float] = Field(None, description="Maximum distance to POI in miles")
 
 def entity_extractor(state: AgentState):
     llm = get_llm()
     last_message = state["messages"][-1][1]
     conversation_history = state.get("conversation_history", [])
+    
+    # Pre-process user input with abbreviations module
+    normalized_message = normalize_real_estate_terms(last_message)
+    
+    # Check for metro area abbreviations
+    metro_cities = normalize_metro_area(last_message)
+    
+    # Check for POI proximity requirements
+    poi_category = normalize_poi_category(last_message)
+    distance_pref = None
+    if poi_category:
+        distance_pref = extract_distance_preference(last_message)
     
     structured_llm = llm.with_structured_output(SearchEntities)
     
@@ -58,12 +79,16 @@ KEYWORDS: Extract descriptive terms that describe the property style or features
 - "waterfront", "mountain", "view"
 - Any other descriptive adjectives (EXCLUDING price terms like luxury/cheap)
 
-Extract all relevant search criteria including city, state, price, beds, baths, lot size, and keywords."""),
+POI PROXIMITY: Extract if user mentions proximity to points of interest:
+- "near schools", "close to parks", "near shopping" -> Extract poi_type
+- "within X miles", "walking distance" -> Extract max_distance
+
+Extract all relevant search criteria including city, state, price, beds, baths, lot size, keywords, and POI proximity."""),
         ("user", "{context}Current query: {input}")
     ])
     
     chain = prompt | structured_llm
-    entities = chain.invoke({"input": last_message, "context": context})
+    entities = chain.invoke({"input": normalized_message, "context": context})
     
     # Post-processing for price mapping if LLM misses it
     extracted = entities.dict(exclude_none=True)
@@ -81,6 +106,17 @@ Extract all relevant search criteria including city, state, price, beds, baths, 
         keywords = [k for k in keywords if k not in ["cheap", "affordable"]]
         
     extracted["keywords"] = keywords
+    
+    # Override with metro area cities if detected
+    if metro_cities:
+        extracted["cities"] = metro_cities
+        print(f"[DEBUG] Detected metro area with cities: {metro_cities}")
+    
+    # Add POI proximity if detected
+    if poi_category:
+        extracted["poi_type"] = poi_category
+        extracted["max_distance"] = distance_pref
+        print(f"[DEBUG] Detected POI proximity: {poi_category} within {distance_pref} miles")
     
     return {"extracted_entities": extracted}
 

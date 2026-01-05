@@ -47,6 +47,10 @@ st.markdown("""
 # Initialize Session Manager
 session_manager = SessionManager()
 
+# Initialize session state (if not already present)
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
 # --- SIDEBAR: Session History ---
 with st.sidebar:
     st.header("🗄️ Chat History")

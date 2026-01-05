@@ -110,7 +110,7 @@ class AgentWrapper:
         # Update session title if it's the first message
         if len(self.chat_history.messages) <= 2:
             self.session_manager.update_session_title(self.session_id, user_message[:50])
-        
+            
         return response
     
     def get_history(self) -> List[Dict[str, str]]:

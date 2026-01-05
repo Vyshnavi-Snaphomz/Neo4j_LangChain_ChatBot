@@ -48,12 +48,20 @@ def neo4j_search(state: AgentState):
         params["state_code"] = state_code
         print(f"[DEBUG] State filter: '{state_input}' (Code: {state_code})")
     
-    # Handle city
-    if "city" in entities:
+    # Handle city (single or multiple cities for metro areas)
+    if "cities" in entities and entities["cities"]:
+        # Multi-city search (e.g., DFW, Bay Area)
+        cities_list = entities["cities"]
+        where_clauses.append("p.city IN $cities")
+        params["cities"] = cities_list
+        print(f"[DEBUG] Multi-city filter: {cities_list}")
+    elif "city" in entities:
+        # Single city search
         city_value = entities["city"]
         where_clauses.append("toLower(p.city) = toLower($city)")
         params["city"] = city_value
         print(f"[DEBUG] City filter: {city_value}")
+    
     
     # Handle price
     if "max_price" in entities:
