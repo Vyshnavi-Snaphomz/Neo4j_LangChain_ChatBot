@@ -3,10 +3,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import Sidebar from "@/components/Sidebar";
 import HeroSection from "@/components/HeroSection";
 import SearchBar from "@/components/SearchBar";
-import SuggestedQuestions from "@/components/SuggestedQuestions";
+import FloatingImages from "@/components/FloatingImages";
 import FollowUpChips from "@/components/FollowUpChips";
 import PropertyCarousel from "@/components/PropertyCarousel";
-import AISummary from "@/components/AISummary";
 import ImageLightbox from "@/components/ImageLightbox";
 import LoadingState from "@/components/LoadingState";
 import {
@@ -87,17 +86,17 @@ const Index = () => {
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-h-screen overflow-hidden">
         {isEmptyState ? (
-          /* Empty State - Centered Layout */
-          <div className="flex-1 flex flex-col items-center justify-center px-6 py-12">
-            <div className="w-full max-w-3xl space-y-12">
+          /* Empty State - Hero with floating images */
+          <div className="flex-1 flex flex-col items-center justify-center px-6 py-12 relative">
+            {/* Floating Property Images */}
+            <FloatingImages />
+
+            <div className="w-full max-w-4xl space-y-8 flex flex-col items-center">
               {/* Hero Section */}
               <HeroSection />
 
-              {/* Suggested Questions - ABOVE search bar */}
-              <SuggestedQuestions onSelect={handleSearch} />
-
-              {/* Search Bar - BELOW suggestions */}
-              <SearchBar onSearch={handleSearch} isLoading={isSearching} />
+              {/* Search Bar */}
+              <SearchBar onSearch={handleSearch} isLoading={isSearching} variant="hero" />
             </div>
           </div>
         ) : (
@@ -186,7 +185,7 @@ const Index = () => {
 
         {/* Footer - Only on empty state */}
         {isEmptyState && (
-          <footer className="py-4 text-center">
+          <footer className="py-4 text-center z-10 relative">
             <p className="text-xs text-muted-foreground">Powered by Snaphomz AI</p>
           </footer>
         )}
