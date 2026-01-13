@@ -1,35 +1,41 @@
 import { useState } from "react";
-import { MessageSquarePlus, Search, History, PanelLeftClose, PanelLeft, Trash2 } from "lucide-react";
+import {
+  MessageSquarePlus,
+  Search,
+  History,
+  PanelLeft,
+  Trash2,
+  Clock,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import SnaphomzIcon from "./SnaphomzIcon";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { SnaphomzIcon } from "./SnaphomzIcon";
 import { ChatHistoryItem } from "@/data/mockData";
-import { Button } from "./ui/button";
-import { ScrollArea } from "./ui/scroll-area";
 
 interface SidebarProps {
-  isCollapsed: boolean;
-  onToggle: () => void;
   chatHistory: ChatHistoryItem[];
   activeChat: string | null;
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
   onDeleteChat: (id: string) => void;
+  isCollapsed: boolean;
+  onToggle: () => void;
 }
 
 const Sidebar = ({
-  isCollapsed,
-  onToggle,
   chatHistory,
   activeChat,
   onSelectChat,
   onNewChat,
   onDeleteChat,
+  isCollapsed,
+  onToggle,
 }: SidebarProps) => {
-  const [hoveredChat, setHoveredChat] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   const formatTimestamp = (date: Date) => {
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
+    const diff = Date.now() - date.getTime();
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
@@ -43,147 +49,145 @@ const Sidebar = ({
   return (
     <aside
       className={cn(
-        "h-screen bg-sidebar flex flex-col transition-all duration-300 ease-in-out",
+        "h-screen bg-[#FAFAF9] text-[#0F172A] border-r border-[#E5E7EB] flex flex-col shadow-[2px_0_12px_rgba(15,23,42,0.04)]",
         isCollapsed ? "w-16" : "w-64"
       )}
     >
-      {/* Header */}
-      <div className="p-3 flex items-center justify-between border-b border-sidebar-border">
-        <div className={cn("flex items-center gap-3", isCollapsed && "justify-center w-full")}>
-          <SnaphomzIcon size="md" />
-          {!isCollapsed && (
-            <div className="flex flex-col">
-              <span className="text-sidebar-foreground font-semibold text-sm">Snaphomz</span>
-              <span className="text-sidebar-muted text-xs">AI Search</span>
-            </div>
-          )}
-        </div>
-        {!isCollapsed && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onToggle}
-            className="text-sidebar-muted hover:text-sidebar-foreground hover:bg-sidebar-accent h-8 w-8"
-          >
-            <PanelLeftClose className="h-4 w-4" />
-          </Button>
-        )}
-      </div>
-
-      {/* Navigation */}
-      <div className="p-2 space-y-1">
-        <Button
-          variant="ghost"
-          onClick={onNewChat}
-          className={cn(
-            "w-full justify-start gap-3 text-sidebar-foreground hover:bg-sidebar-accent",
-            isCollapsed && "justify-center px-2"
-          )}
-        >
-          <MessageSquarePlus className="h-5 w-5" />
-          {!isCollapsed && <span>New Chat</span>}
-        </Button>
-
-        {isCollapsed && (
-          <>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="w-full text-sidebar-muted hover:text-sidebar-foreground hover:bg-sidebar-accent"
+      {/* COLLAPSED */}
+      {isCollapsed ? (
+        <div className="flex flex-col h-full py-3">
+          <div className="flex flex-col items-center gap-2">
+            <button
+              onClick={onToggle}
+              className="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-[#F1F5F9]"
             >
-              <Search className="h-5 w-5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="w-full text-sidebar-muted hover:text-sidebar-foreground hover:bg-sidebar-accent"
-            >
-              <History className="h-5 w-5" />
-            </Button>
-          </>
-        )}
-      </div>
+              <SnaphomzIcon className="w-8 h-8" />
+            </button>
 
-      {/* Chat History */}
-      {!isCollapsed && (
-        <div className="flex-1 overflow-hidden flex flex-col">
-          <div className="px-3 py-2">
-            <span className="text-xs font-medium text-sidebar-muted uppercase tracking-wider">
-              Recent
-            </span>
+            <button
+              onClick={onNewChat}
+              className="w-10 h-10 flex items-center justify-center rounded-lg text-[#475569] hover:bg-[#F1F5F9]"
+            >
+              <MessageSquarePlus className="w-5 h-5" />
+            </button>
+
+            <button className="w-10 h-10 flex items-center justify-center rounded-lg text-[#475569] hover:bg-[#F1F5F9]">
+              <Search className="w-5 h-5" />
+            </button>
+
+            <button className="w-10 h-10 flex items-center justify-center rounded-lg text-[#475569] hover:bg-[#F1F5F9]">
+              <History className="w-5 h-5" />
+            </button>
           </div>
-          <ScrollArea className="flex-1 px-2">
-            <div className="space-y-1 pb-4">
-              {chatHistory.map((chat) => (
-                <div
-                  key={chat.id}
-                  className={cn(
-                    "group relative rounded-lg p-2 cursor-pointer transition-colors",
-                    activeChat === chat.id
-                      ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                      : "hover:bg-sidebar-accent text-sidebar-foreground"
-                  )}
-                  onClick={() => onSelectChat(chat.id)}
-                  onMouseEnter={() => setHoveredChat(chat.id)}
-                  onMouseLeave={() => setHoveredChat(null)}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{chat.query}</p>
-                      <p
-                        className={cn(
-                          "text-xs mt-0.5",
-                          activeChat === chat.id ? "text-white/70" : "text-sidebar-muted"
-                        )}
-                      >
+
+          <div className="flex-1" />
+
+          <div className="flex justify-center">
+            <button
+              onClick={onToggle}
+              className="w-10 h-10 flex items-center justify-center rounded-lg text-[#475569] hover:bg-[#F1F5F9]"
+            >
+              <PanelLeft className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* HEADER */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-[#E5E7EB]">
+            <div className="flex items-center gap-3">
+              <SnaphomzIcon className="w-8 h-8" />
+              <div>
+                <h1 className="text-sm font-semibold tracking-tight">
+                  Snaphomz
+                </h1>
+                <p className="text-xs text-[#64748B]">AI Search</p>
+              </div>
+            </div>
+
+            <button
+              onClick={onToggle}
+              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#F1F5F9]"
+            >
+              <PanelLeft className="w-4 h-4 rotate-180" />
+            </button>
+          </div>
+
+          {/* NEW CHAT */}
+          <div className="p-3">
+            <Button
+              onClick={onNewChat}
+              variant="ghost"
+              className="w-full justify-start gap-3 h-10 text-[#0F172A] bg-[#F8FAFC] hover:bg-[#EEF2FF] border border-[#E5E7EB]"
+            >
+              <MessageSquarePlus className="w-5 h-5" />
+              <span className="font-medium">New Chat</span>
+            </Button>
+          </div>
+
+          {/* RECENT */}
+          <div className="flex-1 flex flex-col min-h-0">
+            <div className="px-4 py-2">
+              <p className="text-xs font-medium uppercase tracking-wider text-[#6B7280]">
+                Recent
+              </p>
+            </div>
+
+            <ScrollArea className="flex-1 px-2">
+              {chatHistory.length === 0 ? (
+                <div className="px-4 py-6 text-center">
+                  <Clock className="w-5 h-5 mx-auto text-[#CBD5E1] mb-2" />
+                  <p className="text-xs text-[#94A3B8]">
+                    No recent searches
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {chatHistory.map((chat) => (
+                    <div
+                      key={chat.id}
+                      onClick={() => onSelectChat(chat.id)}
+                      onMouseEnter={() => setHoveredId(chat.id)}
+                      onMouseLeave={() => setHoveredId(null)}
+                      className={cn(
+                        "group relative rounded-lg px-3 py-2 cursor-pointer transition-colors",
+                        activeChat === chat.id
+                          ? "bg-[#EEF2FF] text-[#1E3A8A] ring-1 ring-[#C7D2FE]"
+                          : "hover:bg-[#F1F5F9] text-[#0F172A]"
+                      )}
+                    >
+                      <p className="text-sm font-medium truncate pr-6">
+                        {chat.query}
+                      </p>
+                      <p className="text-xs text-[#9CA3AF]">
                         {formatTimestamp(chat.timestamp)}
                       </p>
+
+                      {hoveredId === chat.id && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteChat(chat.id);
+                          }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-md hover:bg-red-100 text-[#94A3B8] hover:text-red-500"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
-                    {hoveredChat === chat.id && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className={cn(
-                          "h-6 w-6 shrink-0",
-                          activeChat === chat.id
-                            ? "text-white/70 hover:text-white hover:bg-white/10"
-                            : "text-sidebar-muted hover:text-sidebar-foreground hover:bg-sidebar-accent"
-                        )}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteChat(chat.id);
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </ScrollArea>
-        </div>
-      )}
+              )}
+            </ScrollArea>
+          </div>
 
-      {/* Collapse button when collapsed */}
-      {isCollapsed && (
-        <div className="mt-auto p-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onToggle}
-            className="w-full text-sidebar-muted hover:text-sidebar-foreground hover:bg-sidebar-accent"
-          >
-            <PanelLeft className="h-5 w-5" />
-          </Button>
-        </div>
-      )}
-
-      {/* Footer */}
-      {!isCollapsed && (
-        <div className="p-3 border-t border-sidebar-border">
-          <p className="text-xs text-sidebar-muted text-center">Powered by Snaphomz AI</p>
-        </div>
+          {/* FOOTER */}
+          <div className="p-3 border-t border-[#E5E7EB]">
+            <p className="text-[10px] text-center text-[#94A3B8]">
+              Powered by Snaphomz AI
+            </p>
+          </div>
+        </>
       )}
     </aside>
   );

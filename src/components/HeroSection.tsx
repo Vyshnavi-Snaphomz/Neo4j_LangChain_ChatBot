@@ -39,6 +39,7 @@ const HeroSection = () => {
           </AnimatePresence>
         </span>
       </h1>
+
       <p className="mt-4 text-lg md:text-xl text-muted-foreground">
         First end-to-end guided real estate platform
       </p>

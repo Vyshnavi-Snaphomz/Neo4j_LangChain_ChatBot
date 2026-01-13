@@ -16,7 +16,7 @@ const floatingImages = [
     delay: 0.1,
   },
   {
-    src: "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=300&h=300&fit=crop",
+    src: "https://images.unsplash.com/photo-1501183638710-841dd1904471?w=300&h=300&fit=crop",
     position: "top-[8%] right-[22%]",
     size: "w-32 h-40 md:w-40 md:h-48",
     rotate: -5,

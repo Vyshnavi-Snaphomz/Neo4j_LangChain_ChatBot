@@ -1,144 +1,175 @@
-import { useState, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
-import { Sparkles } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Sparkles, Paperclip, ArrowUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "./ui/button";
-import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
-import { Label } from "./ui/label";
 
-interface SearchBarProps {
-  onSearch: (query: string) => void;
-  isLoading?: boolean;
-  variant?: "hero" | "bottom";
-  placeholder?: string;
+/* ---------------- TYPES ---------------- */
+
+interface SearchSectionProps {
+  onSubmit: (query: string) => void;
+  shouldAnimatePlaceholder?: boolean;
 }
 
-const placeholderTexts = [
-  "Show me homes in San Jose CA",
-  "Find houses near good schools",
-  "3 bed homes under $500k",
-  "Condos with a view in SF",
+/* ---------------- DATA ---------------- */
+
+const PLACEHOLDER_PHRASES = [
+  "Ask about homes in California…",
+  "Find neighborhoods for families…",
+  "Compare home prices…",
+  "Show me houses with pools…",
 ];
 
-const SearchBar = ({ onSearch, isLoading, variant = "hero", placeholder }: SearchBarProps) => {
+const SUGGESTED_QUESTIONS = [
+  "What should I look out for?",
+  "Will I like my neighbors?",
+  "Can I raise a family here?",
+  "What’s the home worth?",
+  "How’s the market trending?",
+  "Is this neighborhood safe?",
+];
+
+/* ---------------- COMPONENT ---------------- */
+
+export default function SearchSection({
+  onSubmit,
+  shouldAnimatePlaceholder = true,
+}: SearchSectionProps) {
   const [query, setQuery] = useState("");
-  const [currentPlaceholder, setCurrentPlaceholder] = useState(0);
-  const [isFocused, setIsFocused] = useState(false);
-  const [searchType, setSearchType] = useState("location");
+  const [displayedText, setDisplayedText] = useState("");
+  const [phraseIndex, setPhraseIndex] = useState(0);
+  const [isTyping, setIsTyping] = useState(true);
+  const [animationStopped, setAnimationStopped] = useState(!shouldAnimatePlaceholder);
+
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (variant === "hero" && !placeholder) {
-      const interval = setInterval(() => {
-        setCurrentPlaceholder((prev) => (prev + 1) % placeholderTexts.length);
-      }, 3000);
-      return () => clearInterval(interval);
-    }
-  }, [variant, placeholder]);
+  /* ---------------- PLACEHOLDER ANIMATION ---------------- */
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (query.trim() && !isLoading) {
-      onSearch(query.trim());
-      setQuery("");
+  useEffect(() => {
+    if (!shouldAnimatePlaceholder || animationStopped) {
+      setDisplayedText("Ask anything about this area…");
+      return;
+    }
+
+    const phrase = PLACEHOLDER_PHRASES[phraseIndex];
+
+    if (isTyping) {
+      if (displayedText.length < phrase.length) {
+        const t = setTimeout(() => {
+          setDisplayedText(phrase.slice(0, displayedText.length + 1));
+        }, 35);
+        return () => clearTimeout(t);
+      } else {
+        const t = setTimeout(() => setIsTyping(false), 2000);
+        return () => clearTimeout(t);
+      }
+    } else {
+      if (displayedText.length > 0) {
+        const t = setTimeout(() => {
+          setDisplayedText(displayedText.slice(0, -1));
+        }, 20);
+        return () => clearTimeout(t);
+      } else {
+        setPhraseIndex((p) => (p + 1) % PLACEHOLDER_PHRASES.length);
+        setIsTyping(true);
+      }
+    }
+  }, [
+    displayedText,
+    isTyping,
+    phraseIndex,
+    shouldAnimatePlaceholder,
+    animationStopped,
+  ]);
+
+  const stopAnimation = () => {
+    if (!animationStopped) {
+      setAnimationStopped(true);
+      setDisplayedText("Ask anything about this area…");
     }
   };
 
-  const displayPlaceholder = placeholder || placeholderTexts[currentPlaceholder];
+  /* ---------------- SINGLE SUBMIT FUNCTION (IMPORTANT) ---------------- */
 
-  if (variant === "bottom") {
-    return (
-      <motion.form
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        onSubmit={handleSubmit}
-        className="w-full max-w-2xl mx-auto px-4"
-      >
-        <div
-          className={cn(
-            "relative flex items-center gap-2 rounded-2xl bg-card border-2 transition-all duration-300",
-            isFocused ? "border-primary shadow-lg shadow-primary/10" : "border-border shadow-md",
-            "px-4 py-3"
-          )}
-        >
-          <Sparkles className="w-5 h-5 text-primary shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-            placeholder={displayPlaceholder}
-            disabled={isLoading}
-            className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-base"
-          />
-        </div>
-      </motion.form>
-    );
-  }
+  const submitQuery = (value: string) => {
+    const finalQuery = value.trim();
+    if (!finalQuery) return;
+
+    onSubmit(finalQuery);
+    setQuery("");
+  };
+
+  /* ---------------- HANDLERS ---------------- */
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    submitQuery(query);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submitQuery(query);
+    }
+  };
+
+  const handleSuggestionClick = (q: string) => {
+    submitQuery(q);
+  };
+
+  /* ---------------- UI ---------------- */
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay: 0.3 }}
-      className="w-full max-w-xl mx-auto z-10 relative"
-    >
-      <form onSubmit={handleSubmit}>
-        <div
+  <div className="w-full flex flex-col items-center gap-6">
+    {/* ================= SUGGESTED QUESTIONS (TOP) ================= */}
+    <div className="flex flex-wrap justify-center gap-3 max-w-3xl">
+      {SUGGESTED_QUESTIONS.map((q) => (
+        <button
+          key={q}
+          onClick={() => handleSuggestionClick(q)}
+          className="px-4 py-2 rounded-full border border-border bg-background text-sm hover:bg-muted transition"
+        >
+          {q}
+        </button>
+      ))}
+    </div>
+
+    {/* ================= SEARCH BAR (BELOW) ================= */}
+    <form onSubmit={handleSubmit} className="w-full max-w-2xl">
+      <div className="relative flex items-center gap-3 px-4 py-2 rounded-2xl bg-card border border-border shadow-sm">
+
+        <Sparkles className="w-5 h-5 text-muted-foreground shrink-0" />
+
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => {
+            stopAnimation();
+            setQuery(e.target.value);
+          }}
+          onFocus={stopAnimation}
+          onKeyDown={handleKeyDown}
+          placeholder={displayedText}
+          className="flex-1 bg-transparent outline-none text-foreground placeholder:text-muted-foreground text-sm"
+        />
+
+        <button type="button" className="p-2 rounded-full hover:bg-muted">
+          <Paperclip className="w-4 h-4 text-muted-foreground" />
+        </button>
+
+        <button
+          type="submit"
+          disabled={!query.trim()}
           className={cn(
-            "relative flex items-center rounded-full bg-card border-2 transition-all duration-300 overflow-hidden",
-            isFocused ? "border-primary shadow-xl shadow-primary/15" : "border-border shadow-lg",
-            "pl-5 pr-2 py-2"
+            "p-3 rounded-full transition",
+            query.trim()
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-muted-foreground"
           )}
         >
-          <Sparkles className="w-5 h-5 text-primary shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-            placeholder={displayPlaceholder}
-            disabled={isLoading}
-            className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground text-base px-3"
-          />
-          <Button
-            type="submit"
-            disabled={isLoading}
-            className="rounded-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold px-6 py-2.5 h-auto"
-          >
-            Begin Journey
-          </Button>
-        </div>
-      </form>
-
-      {/* Search Type Toggle */}
-      <div className="flex justify-center mt-4">
-        <RadioGroup
-          value={searchType}
-          onValueChange={setSearchType}
-          className="flex items-center gap-6"
-        >
-          <div className="flex items-center gap-2">
-            <RadioGroupItem value="location" id="location" className="border-muted-foreground" />
-            <Label htmlFor="location" className="text-sm text-muted-foreground cursor-pointer">
-              Search by Location
-            </Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <RadioGroupItem value="address" id="address" className="border-muted-foreground" />
-            <Label htmlFor="address" className="text-sm text-muted-foreground cursor-pointer">
-              Search by Full Address
-            </Label>
-          </div>
-        </RadioGroup>
+          <ArrowUp className="w-4 h-4" />
+        </button>
       </div>
-    </motion.div>
-  );
-};
-
-export default SearchBar;
+    </form>
+  </div>
+);
+}
