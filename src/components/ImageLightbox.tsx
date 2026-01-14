@@ -11,6 +11,13 @@ interface ImageLightboxProps {
 const ImageLightbox = ({ property, onClose }: ImageLightboxProps) => {
   if (!property) return null;
 
+  const images =
+    (property as any)?.images?.length > 0
+      ? (property as any).images
+      : property.image
+      ? [property.image]
+      : [];
+
   return (
     <AnimatePresence>
       <motion.div
@@ -40,11 +47,18 @@ const ImageLightbox = ({ property, onClose }: ImageLightboxProps) => {
 
           {/* Image */}
           <div className="relative">
-            <img
-              src={property.image}
-              alt={property.address || "Property"}
-              className="w-full h-auto max-h-[70vh] object-cover"
-            />
+            {images.length > 0 && (
+              <div className="flex gap-4 overflow-x-auto pb-2 scroll-smooth snap-x snap-mandatory">
+                {images.map((url: string, index: number) => (
+                  <img
+                    key={`${property.id}-lightbox-${index}`}
+                    src={url}
+                    alt={property.address || "Property"}
+                    className="h-72 w-96 flex-shrink-0 rounded-xl object-cover snap-start"
+                  />
+                ))}
+              </div>
+            )}
             {/* Source Badge */}
             <div
               className="absolute top-4 left-4 px-4 py-1.5 rounded-lg text-sm font-semibold text-white"
