@@ -4,7 +4,7 @@ import { Property } from "@/data/mockData";
 import { Button } from "./ui/button";
 
 interface ImageLightboxProps {
-  property: Property | null;
+  property: (Property & { images?: string[] }) | null;
   onClose: () => void;
 }
 
@@ -12,8 +12,8 @@ const ImageLightbox = ({ property, onClose }: ImageLightboxProps) => {
   if (!property) return null;
 
   const images =
-    (property as any)?.images?.length > 0
-      ? (property as any).images
+    property.images && property.images.length > 0
+      ? property.images
       : property.image
       ? [property.image]
       : [];

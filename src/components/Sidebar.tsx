@@ -11,10 +11,14 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SnaphomzIcon } from "./SnaphomzIcon";
-import { ChatHistoryItem } from "@/data/mockData";
+interface ChatThreadSummary {
+  id: string;
+  title: string;
+  timestamp: Date;
+}
 
 interface SidebarProps {
-  chatHistory: ChatHistoryItem[];
+  chatHistory: ChatThreadSummary[];
   activeChat: string | null;
   onSelectChat: (id: string) => void;
   onNewChat: () => void;
@@ -49,7 +53,7 @@ const Sidebar = ({
   return (
     <aside
       className={cn(
-        "h-screen bg-[#FAFAF9] text-[#0F172A] border-r border-[#E5E7EB] flex flex-col shadow-[2px_0_12px_rgba(15,23,42,0.04)]",
+        "sticky top-0 h-screen shrink-0 self-start bg-[#FAFAF9] text-[#0F172A] border-r border-[#E5E7EB] flex flex-col shadow-[2px_0_12px_rgba(15,23,42,0.04)]",
         isCollapsed ? "w-16" : "w-64"
       )}
     >
@@ -157,7 +161,7 @@ const Sidebar = ({
                       )}
                     >
                       <p className="text-sm font-medium truncate pr-6">
-                        {chat.query}
+                        {chat.title}
                       </p>
                       <p className="text-xs text-[#9CA3AF]">
                         {formatTimestamp(chat.timestamp)}

@@ -10,6 +10,7 @@ export interface Property {
 }
 
 export interface SearchResult {
+  type: "search";
   query: string;
   sourcesCount: number;
   followUps: string[];
@@ -18,11 +19,47 @@ export interface SearchResult {
   timestamp: Date;
 }
 
+export type RentVsBuyResponse = {
+  status?: string;
+  message?: string;
+  location?: string;
+  average_home_price?: number | string;
+  average_rent?: number | string;
+  monthly_mortgage?: number | string;
+  total_monthly_cost_buying?: number | string;
+  total_monthly_cost_renting?: number | string;
+  affordability_score?: number | string;
+  affordable?: boolean;
+  equity_projection?: Array<{
+    year?: number | string;
+    equity?: number | string;
+  }>;
+  recommendation?: string;
+  missing_info?: string[];
+  missing_fields?: string[];
+  [key: string]: any;
+};
+
+export interface RentVsBuyResult {
+  type: "rent-vs-buy";
+  query: string;
+  timestamp: Date;
+  response: RentVsBuyResponse;
+  inputs?: {
+    location?: string;
+    budget?: number;
+    income?: number;
+    down_payment?: number;
+    loan_term?: number;
+    mortgage_rate?: number;
+  };
+}
+
 export interface ChatHistoryItem {
   id: string;
   query: string;
   timestamp: Date;
-  result: SearchResult;
+  result: SearchResult | RentVsBuyResult;
 }
 
 export const suggestedQuestions = [
@@ -79,6 +116,7 @@ export const mockProperties: Property[] = [
 
 export const getMockResponse = (query: string): SearchResult => {
   return {
+    type: "search",
     query,
     sourcesCount: 4,
     followUps: [
