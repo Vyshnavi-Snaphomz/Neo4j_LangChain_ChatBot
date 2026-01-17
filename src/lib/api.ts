@@ -1,9 +1,6 @@
-const normalizeBaseUrl = (baseUrl?: string) => {
-  if (!baseUrl) return "";
-  return baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
-};
-
-const buildUrl = (path: string) => (path.startsWith("/") ? path : `/${path}`);
+// ✅ CONFIRMED BACKEND CONTRACT (IMMUTABLE)
+// Backend Base URL: http://127.0.0.1:8001
+const API_BASE = "http://127.0.0.1:8001";
 
 export type SearchPayload = {
   query: string;
@@ -19,12 +16,12 @@ export type SearchPayload = {
 };
 
 export type RentVsBuyPayload = {
-  location?: string;
-  budget?: number;
-  income?: number;
-  down_payment?: number;
-  loan_term?: number;
-  mortgage_rate?: number;
+  location?: string;      // Full state name (e.g., "California")
+  budget?: number;        // Included as per user requirement (Backend might ignore or use)
+  income?: number;        // Annual income
+  down_payment?: number;  // Optional, defaults to backend value
+  loan_term?: number;     // Optional, defaults to 30
+  mortgage_rate?: number; // Optional, defaults to backend value
 };
 
 export type QuestionPayload = {
@@ -32,48 +29,64 @@ export type QuestionPayload = {
 };
 
 export async function searchProperties(payload: SearchPayload) {
-  const res = await fetch(buildUrl("/api/search"), {
+  const res = await fetch(`${API_BASE}/api/search`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "Accept": "application/json"
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      query: payload.query
+    }),
   });
 
   if (!res.ok) {
-    throw new Error("Unable to fetch listings right now.");
+    throw new Error("Backend request failed");
   }
 
   return res.json();
 }
 
 export async function rentVsBuy(payload: RentVsBuyPayload) {
-  const res = await fetch(buildUrl("/rent-vs-buy"), {
+  // Log the request for debugging
+  console.log('[API] Rent vs Buy Request:', JSON.stringify(payload, null, 2));
+
+  const res = await fetch(`${API_BASE}/rent-vs-buy`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "Accept": "application/json"
     },
     body: JSON.stringify(payload),
   });
 
   if (!res.ok) {
-    throw new Error("Unable to fetch rent vs buy analysis right now.");
+    const errorText = await res.text();
+    console.error('[API] Rent vs Buy Error:', res.status, errorText);
+    if (res.status === 422) {
+      throw new Error("Missing required details to calculate rent vs buy. Please provide state, budget, and monthly income.");
+    }
+    throw new Error("Service temporarily unavailable. Please try again.");
   }
 
   return res.json();
 }
 
 export async function askQuestion(payload: QuestionPayload) {
-  const res = await fetch(buildUrl("/api/question"), {
+  // Use /question endpoint (not /api/question)
+  const res = await fetch(`${API_BASE}/question`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "Accept": "application/json"
     },
     body: JSON.stringify(payload),
   });
 
   if (!res.ok) {
-    throw new Error("Unable to fetch an answer right now.");
+    const errorText = await res.text();
+    console.error('[API] Question Error:', res.status, errorText);
+    throw new Error("Service temporarily unavailable. Please try again.");
   }
 
   return res.json();

@@ -48,6 +48,12 @@ const RENT_BUY_KEYWORDS = [
   "should i buy",
   "buy or rent",
   "is it better to rent",
+  "financial comparison",
+  "mortgage vs rent",
+  "compare renting and buying",
+  "affordability",
+  "budget",
+  "income",
 ];
 
 const GENERAL_INFO_KEYWORDS = [
@@ -67,6 +73,17 @@ const GENERAL_INFO_KEYWORDS = [
   "affordability",
   "taxes",
   "insurance",
+  "what is",
+  "how does",
+  "mortgage",
+  "hoa",
+  "escrow",
+  "pmi",
+  "closing costs",
+  "down payment",
+  "appraisal",
+  "inspection",
+  "interest rate",
 ];
 
 type UnknownRecord = Record<string, unknown>;
@@ -97,25 +114,47 @@ const formatPrice = (value: unknown): string | undefined => {
 
 const formatAddress = (item: unknown): string | undefined => {
   if (!isRecord(item)) return undefined;
+
   const addressUnparsed = getString(item.addressUnparsedAddress);
   if (addressUnparsed) return addressUnparsed;
-  const addressString = getString(item.address);
-  if (addressString) return addressString;
 
-  const addressObj = isRecord(item.address) ? item.address : null;
+  const fullAddress =
+    getString(item.full_address) ||
+    getString(item.fullAddress) ||
+    getString(item.unparsedAddress);
+  if (fullAddress) return fullAddress;
+
+  const addressString = getString(item.address_string) || getString(item.address);
+  if (addressString && typeof item.address === "string") return addressString;
+
+  const location = isRecord(item.location) ? item.location : null;
+  const addressObj = isRecord(item.address)
+    ? item.address
+    : location && isRecord(location)
+      ? location
+      : null;
+
   if (addressObj) {
     const parts = [
-      getString(addressObj.street),
+      getString(addressObj.street) || getString(addressObj.streetAddress) || getString(addressObj.line1),
       getString(addressObj.city),
-      getString(addressObj.state),
-      getString(addressObj.postal_code ?? addressObj.postalCode ?? addressObj.zip),
+      getString(addressObj.state) || getString(addressObj.stateCode) || getString(addressObj.state_code),
+      getString(
+        addressObj.postal_code ??
+        addressObj.postalCode ??
+        addressObj.zip ??
+        addressObj.zipCode
+      ),
     ].filter(Boolean) as string[];
+
     if (parts.length) return parts.join(", ");
+    if (getString(addressObj.address)) return getString(addressObj.address);
   }
 
-  const parts = [getString(item.city), getString(item.state)].filter(
-    Boolean
-  ) as string[];
+  const parts = [
+    getString(item.city),
+    getString(item.state) || getString(item.stateCode) || getString(item.state_code),
+  ].filter(Boolean) as string[];
 
   return parts.length ? parts.join(", ") : undefined;
 };
@@ -250,54 +289,89 @@ const parseMoneyValue = (query: string): number | null => {
   return Number.isFinite(value) ? value : null;
 };
 
+// 🔧 IMPROVED: Extract budget from anywhere in the text
 const extractBudget = (query: string): number | null => {
   const normalized = query.toLowerCase();
-  const hasBudgetCue =
-    /\$/.test(query) ||
-    /\b(k|m)\b/i.test(query) ||
-    /\b(budget|price|cost|with|under|over|around)\b/i.test(normalized);
-  const incomeOnly = /\bincome\b/i.test(normalized) && !hasBudgetCue;
-  if (incomeOnly) return null;
 
-  return parseMoneyValue(query);
-};
-
-const extractLocation = (query: string): string | null => {
-  const match = query.match(/\b(?:in|at|near|around)\s+([a-zA-Z\s,]+)/i);
-  const cleanup = (value: string) =>
-    value
-      .replace(
-        /\b(with|for|budget|under|over|around|income|down payment|mortgage|loan|rate)\b.*$/i,
-        ""
-      )
-      .trim();
-  const isTrivial = (value: string) => {
-    const normalized = value.toLowerCase().trim();
-    return (
-      !normalized ||
-      ["my", "me", "i", "mine"].includes(normalized) ||
-      /\b(income|budget|rent|buy)\b/i.test(normalized)
-    );
-  };
-
-  if (match) {
-    const location = cleanup(match[1]);
-    return location && !isTrivial(location) ? location : null;
+  // Look for explicit budget mentions
+  const budgetMatch = query.match(/\b(?:budget|price|cost|afford)(?:\s+is|\s+of)?\s*\$?([\d,]+)\s?(k|m)?/i);
+  if (budgetMatch) {
+    return parseMoneyValue(budgetMatch[0]);
   }
 
-  const cutoffMatch = query.match(
-    /^(.*?)(?:\band\b|\bwith\b|\bincome\b|\bbudget\b|\bdown payment\b|\bmortgage\b|\bloan\b|\brate\b)/i
-  );
-  const candidate = cleanup(cutoffMatch ? cutoffMatch[1] : query).trim();
-  if (!candidate || !/[a-zA-Z]/.test(candidate)) return null;
-  if (isTrivial(candidate)) return null;
-  if (/\brent\b|\bbuy\b/i.test(candidate)) return null;
-  return candidate.length > 80 ? null : candidate;
+  // If "income" is mentioned, skip budget extraction to avoid confusion
+  if (/\bincome\b/i.test(normalized)) {
+    // Only extract if there are TWO money values (one for budget, one for income)
+    const moneyMatches = query.match(/\$?([\d,]+)\s?(k|m)?/gi);
+    if (moneyMatches && moneyMatches.length >= 2) {
+      // First value is likely budget
+      return parseMoneyValue(moneyMatches[0]);
+    }
+    return null;
+  }
+
+  // Look for any money value with budget keywords
+  const hasBudgetCue = /\b(budget|price|cost|with|under|over|around)\b/i.test(normalized);
+  if (hasBudgetCue) {
+    return parseMoneyValue(query);
+  }
+
+  return null;
+};
+
+// 🔧 IMPROVED: Extract location/state from natural language
+const extractLocation = (query: string): string | null => {
+  const normalized = query.toLowerCase();
+
+  // US State mapping (Input -> Full Name)
+  const stateMap: Record<string, string> = {
+    'california': 'California', 'ca': 'California',
+    'texas': 'Texas', 'tx': 'Texas',
+    'florida': 'Florida', 'fl': 'Florida',
+    'new york': 'New York', 'ny': 'New York',
+    'illinois': 'Illinois', 'il': 'Illinois',
+    'pennsylvania': 'Pennsylvania', 'pa': 'Pennsylvania',
+    'ohio': 'Ohio', 'oh': 'Ohio',
+    'georgia': 'Georgia', 'ga': 'Georgia',
+    'north carolina': 'North Carolina', 'nc': 'North Carolina',
+    'michigan': 'Michigan', 'mi': 'Michigan',
+    'arizona': 'Arizona', 'az': 'Arizona',
+    'washington': 'Washington', 'wa': 'Washington',
+    'colorado': 'Colorado', 'co': 'Colorado',
+    'oregon': 'Oregon', 'or': 'Oregon',
+    'nevada': 'Nevada', 'nv': 'Nevada',
+  };
+
+  // Look for "I live in [state]" or "in [state]"
+  const liveInMatch = query.match(/\b(?:i\s+live\s+in|in|at|near|around)\s+([a-zA-Z\s]+?)(?:\s+(?:my|and|with|budget|income|$))/i);
+  if (liveInMatch) {
+    const location = liveInMatch[1].trim().toLowerCase();
+    console.log('[extractLocation] Matched location:', liveInMatch[1], '→ normalized:', location);
+    if (stateMap[location]) {
+      console.log('[extractLocation] Found in stateMap:', stateMap[location]);
+      return stateMap[location];
+    }
+    // Return capitalized if not found (e.g. city)
+    const capitalized = location.charAt(0).toUpperCase() + location.slice(1);
+    console.log('[extractLocation] Not in stateMap, returning as-is:', capitalized);
+    return capitalized;
+  }
+
+  // Check if any state name appears in the query
+  for (const [stateName, stateCode] of Object.entries(stateMap)) {
+    if (normalized.includes(stateName)) {
+      console.log('[extractLocation] Found state name in query:', stateName, '→', stateCode);
+      return stateCode;
+    }
+  }
+
+  console.log('[extractLocation] No location found');
+  return null;
 };
 
 const isLikelyLocationReply = (query: string) => {
   const normalized = query.toLowerCase().trim();
-  if (/\b(in|at|near|around)\b/.test(normalized)) return true;
+  if (/\b(in|at|near|around|live)\b/.test(normalized)) return true;
   if (/\d/.test(normalized)) return false;
   if (/\b(income|budget|mortgage|loan|rate|down payment)\b/.test(normalized))
     return false;
@@ -305,15 +379,37 @@ const isLikelyLocationReply = (query: string) => {
   return normalized.split(/\s+/).length <= 3;
 };
 
+// 🔧 IMPROVED: Extract income from anywhere in the text
 const extractIncome = (query: string): number | null => {
   const normalized = query.toLowerCase();
-  if (!normalized.includes("income")) return null;
-  const match =
-    query.match(/\bincome\b[^0-9$%]*\$?([\d,]+)\s?(k|m)?/i) ??
-    query.match(/\bmonthly income\b[^0-9$%]*\$?([\d,]+)\s?(k|m)?/i);
-  if (!match) return null;
-  const value = parseMoneyValue(match[0]);
-  return Number.isFinite(value ?? NaN) ? value : null;
+
+  // Look for explicit income mentions
+  const incomeMatch = query.match(/\b(?:monthly\s+)?income(?:\s+is|\s+of)?\s*\$?([\d,]+)\s?(k|m)?/i);
+  if (incomeMatch) {
+    return parseMoneyValue(incomeMatch[0]);
+  }
+
+  // If "income" keyword exists, try to find the associated number
+  if (/\bincome\b/i.test(normalized)) {
+    // Look for number after "income"
+    const afterIncomeMatch = query.match(/\bincome\b[^0-9$%]*\$?([\d,]+)\s?(k|m)?/i);
+    if (afterIncomeMatch) {
+      return parseMoneyValue(afterIncomeMatch[0]);
+    }
+
+    // If there are multiple money values, the last one is likely income
+    const moneyMatches = query.match(/\$?([\d,]+)\s?(k|m)?/gi);
+    if (moneyMatches && moneyMatches.length >= 2) {
+      return parseMoneyValue(moneyMatches[moneyMatches.length - 1]);
+    }
+
+    // Single money value with "income" keyword
+    if (moneyMatches && moneyMatches.length === 1) {
+      return parseMoneyValue(moneyMatches[0]);
+    }
+  }
+
+  return null;
 };
 
 const extractDownPayment = (query: string): number | null => {
@@ -401,31 +497,17 @@ type ChatThread = {
 
 const extractPhotos = (item: unknown): string[] => {
   const record = isRecord(item) ? item : {};
-  const list = Array.isArray(record.photos)
-    ? record.photos
-    : (() => {
-        const rawListing = isRecord(record._raw_listing)
-          ? record._raw_listing
-          : null;
-        const media = rawListing && isRecord(rawListing.media) ? rawListing.media : null;
-        return Array.isArray(media?.photosList) ? media?.photosList : [];
-      })();
 
-  if (Array.isArray(list)) {
-    return list
-      .map((photo) => {
-        if (typeof photo === "string") return photo;
-        if (!isRecord(photo)) return undefined;
-        return (
-          getString(photo.highRes) ||
-          getString(photo.midRes) ||
-          getString(photo.url)
-        );
-      })
-      .filter(Boolean) as string[];
+  if (Array.isArray(record.photos) && record.photos.length > 0) {
+    return record.photos.filter((p) => typeof p === "string") as string[];
   }
 
-  const imageUrl = getString(record.image_url);
+  const imageUrl =
+    getString(record.image_url) ??
+    getString(record.imageUrl) ??
+    getString(record.image) ??
+    getString(record.primaryImageUrl);
+
   return imageUrl ? [imageUrl] : [];
 };
 
@@ -433,68 +515,25 @@ const mapApiResponseToSearchResult = (
   query: string,
   data: unknown
 ): SearchResult => {
-  const record = isRecord(data) ? data : {};
-  const parseJsonArray = (value: unknown): unknown[] => {
-    if (typeof value !== "string") return [];
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed;
-      if (isRecord(parsed)) {
-        return (
-          (Array.isArray(parsed.properties) && parsed.properties) ||
-          (Array.isArray(parsed.results) && parsed.results) ||
-          (Array.isArray(parsed.listings) && parsed.listings) ||
-          []
-        );
-      }
-    } catch {
-      return [];
-    }
-    return [];
-  };
-  const extractArray = (value: unknown): unknown[] => {
-    if (Array.isArray(value)) return value;
-    if (isRecord(value)) {
-      const nested =
-        (Array.isArray(value.items) && value.items) ||
-        (Array.isArray(value.properties) && value.properties) ||
-        (Array.isArray(value.results) && value.results) ||
-        (Array.isArray(value.listings) && value.listings) ||
-        (Array.isArray(value.records) && value.records) ||
-        (Array.isArray(value.data) && value.data);
-      if (nested) return nested;
-      const parsed = parseJsonArray(value.properties) || parseJsonArray(value.data);
-      if (parsed.length) return parsed;
-      if (isRecord(value.data)) {
-        const nestedData =
-          (Array.isArray(value.data.items) && value.data.items) ||
-          (Array.isArray(value.data.properties) && value.data.properties) ||
-          (Array.isArray(value.data.results) && value.data.results) ||
-          (Array.isArray(value.data.listings) && value.data.listings) ||
-          (Array.isArray(value.data.records) && value.data.records);
-        return nestedData ?? [];
-      }
-      return [];
+  // Single Source of Truth for extraction (checking top-level and common wrappers)
+  const getRawProperties = (val: unknown): unknown[] => {
+    if (Array.isArray(val)) return val;
+    if (!isRecord(val)) return [];
+    if (Array.isArray(val.properties)) return val.properties;
+    if (Array.isArray(val.listings)) return val.listings;
+    if (Array.isArray(val.results)) return val.results;
+
+    // Check nested wrappers
+    const nested = isRecord(val.data) ? val.data : isRecord(val.result) ? val.result : null;
+    if (nested) {
+      if (Array.isArray(nested.properties)) return nested.properties;
+      if (Array.isArray(nested.listings)) return nested.listings;
+      if (Array.isArray(nested.results)) return nested.results;
     }
     return [];
   };
 
-  const propertyCandidates = [
-    extractArray(Array.isArray(data) ? data : undefined),
-    extractArray(record.properties),
-    extractArray(record.results),
-    extractArray(record.listings),
-    extractArray(record.records),
-    extractArray(record.data),
-    extractArray(isRecord(record.data) ? record.data.properties : undefined),
-    extractArray(isRecord(record.data) ? record.data.results : undefined),
-    extractArray(isRecord(record.data) ? record.data.listings : undefined),
-    parseJsonArray(record.properties),
-    parseJsonArray(record.data),
-  ];
-
-  const rawProperties =
-    propertyCandidates.find((items) => items.length > 0) ?? [];
+  const rawProperties = getRawProperties(data);
 
   const mappedProperties: Property[] = rawProperties.map(
     (item: unknown, index: number) => {
@@ -504,69 +543,134 @@ const mapApiResponseToSearchResult = (
       return {
         id: String(
           itemRecord.id ??
-            itemRecord.listing_id ??
-            itemRecord.property_id ??
-            itemRecord._id ??
-            `${query}-${index}`
+          itemRecord.listing_id ??
+          itemRecord.property_id ??
+          itemRecord.zpid ??
+          itemRecord._id ??
+          `${query}-${index}`
         ),
-        image: photos[0] ?? getString(itemRecord.image_url) ?? "",
+        image:
+          photos[0] ??
+          getString(itemRecord.image_url) ??
+          getString(itemRecord.primaryImageUrl) ??
+          getString(itemRecord.imageUrl) ??
+          getString(itemRecord.image) ??
+          "",
         source:
           getString(itemRecord.source) ??
           getString(itemRecord.provider) ??
           getString(itemRecord.site) ??
+          getString(itemRecord.attribution) ??
           "Listing",
-        sourceColor: getString(itemRecord.sourceColor) ??
+        sourceColor:
+          getString(itemRecord.sourceColor) ??
           getString(itemRecord.source_color) ??
           "#0f172a",
-        price: formatPrice(itemRecord.list_price ?? itemRecord.price),
+        price: formatPrice(
+          itemRecord.list_price ??
+          itemRecord.price ??
+          itemRecord.amount ??
+          itemRecord.asking_price ??
+          itemRecord.listPrice ??
+          itemRecord.cost
+        ),
         address:
           formatAddress(itemRecord) ??
           getString(itemRecord.full_address) ??
+          getString(itemRecord.address_string) ??
+          getString(itemRecord.streetAddress) ??
+          getString(location?.full_address) ??
           getString(location?.address),
         beds: parseNumber(
-          itemRecord.propertyBedroomTotal ?? itemRecord.beds ?? itemRecord.bedrooms
+          itemRecord.propertyBedroomTotal ??
+          itemRecord.beds ??
+          itemRecord.bedrooms ??
+          itemRecord.bed ??
+          itemRecord.br
         ),
         baths: parseNumber(
-          itemRecord.propertyBathroomTotal ?? itemRecord.baths ?? itemRecord.bathrooms
+          itemRecord.propertyBathroomTotal ??
+          itemRecord.baths ??
+          itemRecord.bathrooms ??
+          itemRecord.bath ??
+          itemRecord.ba
         ),
         photos,
-        livingArea: parseNumber(itemRecord.living_area ?? itemRecord.propertyLivingArea),
-        score: typeof itemRecord.score === "number" ? itemRecord.score : undefined,
+        livingArea: parseNumber(
+          itemRecord.living_area ??
+          itemRecord.propertyLivingArea ??
+          itemRecord.sqft ??
+          itemRecord.square_feet ??
+          itemRecord.lotSize ??
+          itemRecord.area
+        ),
+        yearBuilt: parseNumber(
+          itemRecord.year_built ??
+          itemRecord.yearBuilt ??
+          itemRecord.year
+        ),
+        lotSize: getString(itemRecord.lot_size ?? itemRecord.lotSize) ??
+          (typeof itemRecord.lotSize === 'number' ? `${itemRecord.lotSize} sqft` : undefined),
+        propertyType: getString(
+          itemRecord.prop_type ??
+          itemRecord.propertyType ??
+          itemRecord.property_type ??
+          itemRecord.type
+        ),
+        status: getString(
+          itemRecord.status ??
+          itemRecord.listingStatus ??
+          itemRecord.listing_status
+        ),
+        score:
+          typeof itemRecord.score === "number"
+            ? itemRecord.score
+            : typeof itemRecord.relevance_score === "number"
+              ? itemRecord.relevance_score
+              : undefined,
         description:
           getString(itemRecord.publicRemark) ??
           getString(itemRecord.remarks) ??
-          getString(itemRecord.description),
-        url: getString(itemRecord.url),
+          getString(itemRecord.description) ??
+          getString(itemRecord.summary),
+        url:
+          getString(itemRecord.url) ??
+          getString(itemRecord.link) ??
+          getString(itemRecord.listing_url),
       };
     }
   );
 
   const limitedProperties = mappedProperties.slice(0, 10);
+  const record = isRecord(data) ? data : {};
+  const metadata = isRecord(record.metadata) ? record.metadata : null;
+  const apiQuery = query;
 
-  const timestampRaw = record.timestamp;
-  const timestampValue =
-    typeof timestampRaw === "string" || typeof timestampRaw === "number"
-      ? new Date(timestampRaw)
-      : new Date();
-  const timestamp = Number.isNaN(timestampValue.getTime())
-    ? new Date()
-    : timestampValue;
+  const summary =
+    getString(record.summary) ??
+    getString(record.answer) ??
+    getString(record.message) ??
+    getString(metadata?.summary) ??
+    getString(isRecord(record.data) ? record.data.summary : undefined) ??
+    getString(isRecord(record.result) ? record.result.summary : undefined) ??
+    getString(isRecord(record.data) ? record.data.answer : undefined) ??
+    getString(isRecord(record.result) ? record.result.answer : undefined) ??
+    getString(isRecord(record.data) ? record.data.message : undefined) ??
+    getString(isRecord(record.result) ? record.result.message : undefined) ??
+    "";
 
   return {
     type: "search",
-    query: getString(record.query) ?? query,
+    query: apiQuery,
     sourcesCount:
       (typeof record.sourcesCount === "number" ? record.sourcesCount : undefined) ??
       (typeof record.sources_count === "number" ? record.sources_count : undefined) ??
+      (typeof metadata?.total_results === "number" ? metadata?.total_results : undefined) ??
       limitedProperties.length,
     followUps: [],
     properties: limitedProperties,
-    summary:
-      getString(record.summary) ??
-      getString(record.answer) ??
-      getString(record.message) ??
-      "",
-    timestamp,
+    summary,
+    timestamp: new Date(),
   };
 };
 
@@ -598,6 +702,42 @@ const Index = () => {
   useEffect(() => {
     activeThreadIdRef.current = activeThreadId;
   }, [activeThreadId]);
+
+  // Restore chat history on mount
+  useEffect(() => {
+    try {
+      const savedThreads = localStorage.getItem("chat_history");
+      const savedActiveId = localStorage.getItem("active_thread_id");
+
+      if (savedThreads) {
+        const parsedThreads = JSON.parse(savedThreads);
+        if (Array.isArray(parsedThreads)) {
+          const restoredThreads = parsedThreads.map((t: any) => ({
+            ...t,
+            timestamp: new Date(t.timestamp),
+            messages: t.messages || []
+          }));
+          setThreads(restoredThreads);
+        }
+      }
+
+      if (savedActiveId) {
+        setActiveThreadId(savedActiveId);
+      }
+    } catch (e) {
+      console.error("Failed to restore chat history", e);
+    }
+  }, []);
+
+  // Save chat history on update
+  useEffect(() => {
+    if (threads.length > 0) {
+      localStorage.setItem("chat_history", JSON.stringify(threads));
+    }
+    if (activeThreadId) {
+      localStorage.setItem("active_thread_id", activeThreadId);
+    }
+  }, [threads, activeThreadId]);
 
   const appendMessage = useCallback((message: ChatMessage) => {
     setThreads((prev) => {
@@ -638,56 +778,57 @@ const Index = () => {
     existingDraft: RentVsBuyDraft | null,
     missingFields: string[]
   ): RentVsBuyDraft => {
-    const baseQuery = existingDraft?.query ?? query;
+    // 1. Extract values from current query
+    const extractedIncome = extractIncome(query);
+    const extractedBudget = extractBudget(query);
+    const extractedLocation = extractLocation(query);
+    const extractedDownPayment = extractDownPayment(query);
+    const extractedLoanTerm = extractLoanTerm(query);
+    const extractedMortgageRate = extractMortgageRate(query);
     const numericValue = isNumericOnlyQuery(query) ? parseMoneyValue(query) : null;
-    const incomeFromQuery = extractIncome(query);
-    const budgetFromQuery = extractBudget(query);
-    const locationFromQuery = extractLocation(query);
-    const downPaymentFromQuery = extractDownPayment(query);
-    const loanTermFromQuery = extractLoanTerm(query);
-    const mortgageRateFromQuery = extractMortgageRate(query);
-    const locationFromBase = extractLocation(baseQuery);
 
-    let location = existingDraft?.location ?? locationFromBase ?? undefined;
-    if (locationFromQuery && isLikelyLocationReply(query)) {
-      location = locationFromQuery;
-    }
+    // 2. Start with existing draft or initialize new
+    const base: RentVsBuyDraft = existingDraft
+      ? { ...existingDraft }
+      : { query };
 
-    let income = existingDraft?.income ?? undefined;
-    let budget = existingDraft?.budget ?? undefined;
-    let downPayment = existingDraft?.down_payment ?? undefined;
-    let loanTerm = existingDraft?.loan_term ?? undefined;
-    let mortgageRate = existingDraft?.mortgage_rate ?? undefined;
+    // 3. Correctly merge new values (only if found)
+    // ✅ This fixes the bug where state was being reset because we weren't spreading previous state
+    if (extractedLocation) base.location = extractedLocation;
+    if (extractedBudget !== null) base.budget = extractedBudget;
+    if (extractedIncome !== null) base.income = extractedIncome;
+    if (extractedDownPayment !== null) base.down_payment = extractedDownPayment;
+    if (extractedLoanTerm !== null) base.loan_term = extractedLoanTerm;
+    if (extractedMortgageRate !== null) base.mortgage_rate = extractedMortgageRate;
 
-    if (incomeFromQuery !== null) income = incomeFromQuery;
-    if (budgetFromQuery !== null) budget = budgetFromQuery;
-    if (downPaymentFromQuery !== null) downPayment = downPaymentFromQuery;
-    if (loanTermFromQuery !== null) loanTerm = loanTermFromQuery;
-    if (mortgageRateFromQuery !== null) mortgageRate = mortgageRateFromQuery;
-
+    // 4. Handle numeric shortcuts for context (e.g. user just types "5000")
     if (numericValue !== null) {
-      if (missingFields.includes("income") && income === undefined) {
-        income = numericValue;
-      } else if (missingFields.includes("budget") && budget === undefined) {
-        budget = numericValue;
-      } else if (income === undefined && budget !== undefined) {
-        income = numericValue;
-      } else if (budget === undefined && income !== undefined) {
-        budget = numericValue;
-      } else if (income === undefined) {
-        income = numericValue;
+      if (missingFields.includes("income") && extractedIncome === null) {
+        base.income = numericValue;
+      } else if (missingFields.includes("budget") && extractedBudget === null) {
+        base.budget = numericValue;
+      } else if (base.income === undefined && base.budget !== undefined) {
+        // Ambiguous number, assume missing field
+        base.income = numericValue;
+      } else if (base.budget === undefined && base.income !== undefined) {
+        base.budget = numericValue;
+      } else if (base.income === undefined) {
+        base.income = numericValue;
       }
     }
 
-    return {
-      query: baseQuery,
-      location,
-      budget,
-      income,
-      down_payment: downPayment,
-      loan_term: loanTerm,
-      mortgage_rate: mortgageRate,
-    };
+    // 🔧 Log extracted values for debugging
+    console.log('[RentVsBuy] Updated draft:', {
+      query,
+      newly_extracted: {
+        location: extractedLocation,
+        budget: extractedBudget,
+        income: extractedIncome
+      },
+      merged_result: base
+    });
+
+    return base;
   };
 
   const handleSearch = useCallback(
@@ -717,9 +858,9 @@ const Index = () => {
           /\bincome\b|\bbudget\b/i.test(trimmed));
       const resolvedIntent =
         rentVsBuyDraft &&
-        (detectedIntent === "rent-vs-buy" ||
-          isFollowUpLocation ||
-          isRentVsBuyFollowUp)
+          (detectedIntent === "rent-vs-buy" ||
+            isFollowUpLocation ||
+            isRentVsBuyFollowUp)
           ? "rent-vs-buy"
           : detectedIntent;
 
@@ -743,7 +884,7 @@ const Index = () => {
             const readableMissing = missingFields
               .map((item) => formatLabel(String(item)))
               .join(" and ");
-            const messageText = `To compare rent vs buy, I still need your ${readableMissing}.`;
+            const messageText = `To compare rent vs buy, I still need your ${readableMissing}.\n\nExtracted so far:\n- State: ${updatedDraft.location || 'not found'}\n- Budget: ${updatedDraft.budget ? `$${updatedDraft.budget.toLocaleString()}` : 'not found'}\n- Income: ${updatedDraft.income ? `$${updatedDraft.income.toLocaleString()}` : 'not found'}`;
             const promptKey = [...missingFields].sort().join("|");
 
             if (promptKey !== lastRentVsBuyPrompt) {
@@ -758,13 +899,29 @@ const Index = () => {
             return;
           }
 
+          // ✅ Send payload with correct field names matching backend contract
+          // Validate that we have all required fields before calling API
+          if (!updatedDraft.location || !updatedDraft.budget || !updatedDraft.income) {
+            console.error('[RentVsBuy] Missing required fields:', {
+              location: updatedDraft.location,
+              budget: updatedDraft.budget,
+              income: updatedDraft.income,
+            });
+            // This should have been caught by the missingFields check above
+            // But adding this as a safety net
+            return;
+          }
+
+          // Calculate defaults if missing
+          const defaultDownPayment = updatedDraft.budget ? updatedDraft.budget * 0.20 : 0;
+
           const response = await rentVsBuy({
-            location: updatedDraft.location,
+            location: updatedDraft.location, // Full state name (e.g., "California")
             budget: updatedDraft.budget,
             income: updatedDraft.income,
-            down_payment: updatedDraft.down_payment,
-            loan_term: updatedDraft.loan_term,
-            mortgage_rate: updatedDraft.mortgage_rate,
+            down_payment: updatedDraft.down_payment ?? defaultDownPayment,
+            loan_term: updatedDraft.loan_term ?? 30,
+            mortgage_rate: updatedDraft.mortgage_rate ?? 6.5,
           });
           const result: RentVsBuyResult = {
             type: "rent-vs-buy",
@@ -786,7 +943,8 @@ const Index = () => {
           setLastRentVsBuyPrompt(null);
 
           appendMessage({
-            id: `${Date.now()}-assistant`,
+            id: `${Date.now()
+              } - assistant`,
             role: "assistant",
             type: "rent-vs-buy",
             result,
@@ -803,21 +961,25 @@ const Index = () => {
           }
           const apiResponse = await searchProperties({
             query: trimmed,
-            state: null,
-            city: null,
-            zip_code: null,
-            min_price: null,
-            max_price: null,
-            beds: null,
-            baths: null,
-            school_rating_min: null,
             use_cache: true,
           });
           const result = mapApiResponseToSearchResult(trimmed, apiResponse);
-          const introText = `Here are 10 homes in ${result.query}.`;
+
+          // 🔑 Normalize query for property searches
+          if (/show|find|list|houses|homes|properties/i.test(result.query)) {
+            const inferredLocation = extractLocation(trimmed);
+            if (inferredLocation) {
+              result.query = inferredLocation;
+            }
+          }
+
+          const introText =
+            result.properties.length > 0
+              ? `Here are ${result.properties.length} homes in ${result.query}.`
+              : result.summary || `I could not find any properties in ${result.query}.`;
 
           appendMessage({
-            id: `${Date.now()}-assistant`,
+            id: `${Date.now()} - assistant`,
             role: "assistant",
             type: "property",
             text: introText,
@@ -836,23 +998,28 @@ const Index = () => {
         const answerText = extractAnswerText(response) ?? buildGeneralSummary(trimmed);
 
         appendMessage({
-          id: `${Date.now()}-assistant`,
+          id: `${Date.now()} - assistant`,
           role: "assistant",
           type: "text",
           text: answerText,
         });
       } catch (error) {
-        const fallbackMessage =
-          resolvedIntent === "rent-vs-buy"
-            ? "I am having trouble reaching the rent vs buy service right now. Please try again in a moment."
+        // ✅ Show actual error message from API, not generic fallback
+        const errorMessage = error instanceof Error
+          ? error.message
+          : resolvedIntent === "rent-vs-buy"
+            ? "Missing required details to calculate rent vs buy"
             : resolvedIntent === "property"
-            ? "I am having trouble reaching the listings service right now. Please try again in a moment."
-            : "I am having trouble responding right now. Please try again in a moment.";
+              ? "Unable to fetch property listings"
+              : "Service temporarily unavailable. Please try again.";
+
+        console.error('[Index] Search Error:', error);
+
         appendMessage({
-          id: `${Date.now()}-assistant`,
+          id: `${Date.now()} - assistant`,
           role: "assistant",
           type: "text",
-          text: fallbackMessage,
+          text: errorMessage,
         });
       } finally {
         setIsSearching(false);
@@ -865,7 +1032,7 @@ const Index = () => {
     text
       .split(/\n\s*\n/)
       .map((paragraph, index) => (
-        <p key={`${paragraph}-${index}`} className="text-sm leading-relaxed">
+        <p key={`${paragraph} - ${index}`} className="text-sm leading-relaxed">
           {paragraph}
         </p>
       ));
@@ -892,14 +1059,14 @@ const Index = () => {
       recommendationLower === "buy"
         ? "buying"
         : recommendationLower === "rent"
-        ? "renting"
-        : undefined;
+          ? "renting"
+          : undefined;
     const affordabilityText =
       response.affordable === undefined
         ? undefined
         : response.affordable
-        ? "affordable"
-        : "not affordable";
+          ? "affordable"
+          : "not affordable";
     const budgetText = inputs.budget ? formatCurrency(inputs.budget) : undefined;
     const incomeText = inputs.income ? formatCurrency(inputs.income) : undefined;
     const inputLine = [budgetText && `budget of ${budgetText}`, incomeText && `monthly income of ${incomeText}`]
@@ -915,10 +1082,10 @@ const Index = () => {
       buyCost && rentCost
         ? `Buying runs about ${buyCost} per month, while renting is around ${rentCost}.`
         : buyCost
-        ? `Estimated monthly buying cost is around ${buyCost}.`
-        : rentCost
-        ? `Estimated monthly rent is around ${rentCost}.`
-        : null;
+          ? `Estimated monthly buying cost is around ${buyCost}.`
+          : rentCost
+            ? `Estimated monthly rent is around ${rentCost}.`
+            : null;
 
     const summaryLines = [
       recommendationVerb
@@ -959,8 +1126,8 @@ const Index = () => {
           response.affordable === undefined
             ? "-"
             : response.affordable
-            ? "Yes"
-            : "No",
+              ? "Yes"
+              : "No",
       },
       {
         label: "Recommendation",
@@ -1027,8 +1194,8 @@ const Index = () => {
                   axisLine={false}
                   tickFormatter={(value) =>
                     typeof value === "number"
-                      ? `$${Math.round(value / 1000)}k`
-                      : `${value}`
+                      ? `$${Math.round(value / 1000)} k`
+                      : `${value} `
                   }
                 />
                 <ChartTooltip
@@ -1066,8 +1233,8 @@ const Index = () => {
                       axisLine={false}
                       tickFormatter={(value) =>
                         typeof value === "number"
-                          ? `$${Math.round(value / 1000)}k`
-                          : `${value}`
+                          ? `$${Math.round(value / 1000)} k`
+                          : `${value} `
                       }
                     />
                     <ChartTooltip
@@ -1093,7 +1260,7 @@ const Index = () => {
                 </ChartContainer>
                 <ul className="space-y-1 text-sm text-muted-foreground">
                   {equityProjection.map((entry, index) => (
-                    <li key={`${entry.year ?? "year"}-${index}`}>
+                    <li key={`${entry.year ?? "year"} -${index} `}>
                       Year {entry.year ?? "-"}: {formatCurrency(entry.equity) ?? entry.equity ?? "-"}
                     </li>
                   ))}
@@ -1107,9 +1274,10 @@ const Index = () => {
   };
 
   const renderPropertyCards = (result: SearchResult) => {
+    if (!result || !result.properties) return null;
     if (result.properties.length === 0) {
       return (
-        <div className="rounded-2xl border bg-card p-4 text-sm text-muted-foreground">
+        <div className="rounded-2xl border bg-card p-4 text-sm text-muted-foreground shadow-sm">
           I could not find any listings that match that request yet. Try a different city, zip, or property type.
         </div>
       );
@@ -1120,56 +1288,43 @@ const Index = () => {
         {result.properties.slice(0, 10).map((property, index) => {
           const details = property as Property & PropertyExtras;
           const photos = Array.isArray(details.photos) ? details.photos : [];
-          const stripImages = photos
-            .map((photo) => {
-              if (typeof photo === "string") return photo;
-              return photo?.midRes ?? photo?.lowRes ?? photo?.highRes ?? "";
-            })
-            .filter(Boolean);
-          const lightboxImages = photos
-            .map((photo) => {
-              if (typeof photo === "string") return photo;
-              return photo?.highRes ?? photo?.midRes ?? photo?.lowRes ?? "";
-            })
-            .filter(Boolean);
-          const images =
-            stripImages.length > 0
-              ? stripImages
-              : lightboxImages.length > 0
-              ? lightboxImages
-              : property.image
+
+
+          // STRICT RULE: Images must come from photos[] or single image property
+          const images = photos.length > 0
+            ? photos
+            : property.image && (property.image.startsWith('http') || property.image.startsWith('/'))
               ? [property.image]
               : [];
 
           return (
             <div
-              key={`${property.id}-${index}`}
+              key={`${property.id} -${index} `}
               className="space-y-4 rounded-2xl border p-4 bg-card"
             >
               {images.length > 0 && (
-                <div className="rounded-xl border bg-muted">
-                  <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-2">
-                    {images.map((url, photoIndex) => (
-                      <div
-                        key={`${property.id}-photo-${photoIndex}`}
-                        className="w-64 shrink-0 aspect-video snap-start rounded-lg overflow-hidden bg-muted"
-                      >
-                        <img
-                          src={url}
-                          alt={property.address || "Property"}
-                          className="h-full w-full object-cover cursor-pointer"
-                          loading="lazy"
-                          onClick={() =>
-                            setLightboxProperty({
-                              ...property,
-                              images:
-                                lightboxImages.length > 0 ? lightboxImages : images,
-                            })
-                          }
-                        />
-                      </div>
-                    ))}
-                  </div>
+                <div className="flex gap-3 overflow-x-auto scrollbar-hide pb-2">
+                  {images.map((img, idx) => (
+                    <img
+                      key={`${property.id}-img-${idx}`}
+                      src={img}
+                      className="h-48 w-72 flex-shrink-0 rounded-xl object-cover cursor-pointer hover:opacity-95 transition-opacity"
+                      alt={`Property image ${idx + 1}`}
+                      onClick={() =>
+                        setLightboxProperty({
+                          ...property,
+                          images: images,
+                          sqft: (property as any).livingArea,
+                          yearBuilt: (property as any).yearBuilt,
+                          lotSize: (property as any).lotSize,
+                          propertyType: (property as any).propertyType,
+                          status: (property as any).status,
+                          listingUrl: (property as any).url,
+                          description: (property as any).description,
+                        } as any)
+                      }
+                    />
+                  ))}
                 </div>
               )}
 
@@ -1335,7 +1490,7 @@ const Index = () => {
       </main>
 
       <ImageLightbox
-        property={lightboxProperty}
+        property={lightboxProperty as any}
         onClose={() => setLightboxProperty(null)}
       />
     </div>
